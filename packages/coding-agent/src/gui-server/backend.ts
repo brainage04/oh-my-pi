@@ -10,16 +10,20 @@ import type { SessionInfo, SessionStatus } from "../session/session-listing";
 import { loadEntriesFromFile } from "../session/session-loader";
 import { SessionManager } from "../session/session-manager";
 import { FileSessionStorage } from "../session/session-storage";
+import { buildAvailableSlashCommands } from "../slash-commands/available-commands";
 import {
 	type GuiBackend,
 	GuiBackendError,
 	type GuiBackendEvent,
 	type GuiBackendIdentity,
+	type GuiConsoleRequest,
 	type GuiLiveMessage,
 	type GuiSessionSummary,
 	type GuiTranscriptItem,
 	type GuiTranscriptPage,
 } from "./backend-types";
+import { GuiConsoleSession, type GuiConsoleState } from "./console";
+import { buildGuiControlCatalog, type GuiControlCatalog } from "./control-catalog";
 import { type ManagedSessionRecord, ManagedSessionStore } from "./managed-session-store";
 import { projectMessage, projectSessionEvent } from "./message-projection";
 
@@ -77,7 +81,12 @@ function boundedLimit(limit: number | undefined): number {
 	return limit;
 }
 
-function summaryFromInfo(info: SessionInfo, managed: boolean, runtime: ManagedRuntime | undefined): GuiSessionSummary {
+function summaryFromInfo(
+	info: SessionInfo,
+	managed: boolean,
+	runtime: ManagedRuntime | undefined,
+	consoleSessionId: string | undefined,
+): GuiSessionSummary {
 	return {
 		id: info.id,
 		cwd: info.cwd,
@@ -87,7 +96,12 @@ function summaryFromInfo(info: SessionInfo, managed: boolean, runtime: ManagedRu
 		messageCount: info.messageCount,
 		managed,
 		writable: managed,
-		state: runtime?.session.isStreaming ? "streaming" : statusToState(info.status),
+		state:
+			info.id === consoleSessionId
+				? "console"
+				: runtime?.session.isStreaming
+					? "streaming"
+					: statusToState(info.status),
 	};
 }
 
@@ -101,6 +115,7 @@ export class OmpGuiBackend implements GuiBackend {
 	readonly #listeners = new Set<(event: GuiBackendEvent) => void>();
 	readonly #daemonId = crypto.randomUUID();
 	#managed: ManagedSessionStore | undefined;
+	#console: GuiConsoleSession | undefined;
 	readonly #stateDir: string;
 
 	constructor(options: OmpGuiBackendOptions) {
@@ -125,7 +140,11 @@ export class OmpGuiBackend implements GuiBackend {
 	async listSessions(): Promise<GuiSessionSummary[]> {
 		const managed = this.#store();
 		const sessions = await SessionManager.listAll(this.#storage);
-		return sessions.map(info => summaryFromInfo(info, managed.has(info.id), this.#runtimes.get(info.id)));
+		const consoleSessionId =
+			this.#console?.state().status !== "exited" ? this.#console?.state().sessionId : undefined;
+		return sessions.map(info =>
+			summaryFromInfo(info, managed.has(info.id), this.#runtimes.get(info.id), consoleSessionId),
+		);
 	}
 
 	async createSession(cwd: string, name?: string): Promise<GuiSessionSummary> {
@@ -158,7 +177,7 @@ export class OmpGuiBackend implements GuiBackend {
 				item => item.id === record.id,
 			);
 			return info
-				? summaryFromInfo(info, true, runtime)
+				? summaryFromInfo(info, true, runtime, undefined)
 				: {
 						id: record.id,
 						cwd: resolvedCwd,
@@ -200,17 +219,84 @@ export class OmpGuiBackend implements GuiBackend {
 		}
 	}
 
+	async controlCatalog(sessionId?: string): Promise<GuiControlCatalog> {
+		if (!sessionId || this.#console?.state().sessionId === sessionId) return await buildGuiControlCatalog();
+		const runtime = await this.#runtimeForOwned(sessionId);
+		return await buildGuiControlCatalog(await buildAvailableSlashCommands(runtime.session));
+	}
+
+	consoleState(): GuiConsoleState | undefined {
+		return this.#console?.state();
+	}
+
+	async startConsole(request: GuiConsoleRequest): Promise<GuiConsoleState> {
+		if (this.#console && this.#console.state().status !== "exited") {
+			throw new GuiBackendError("console_busy", "An OMP console is already running.");
+		}
+		if (this.#console) {
+			await this.#console.dispose();
+			this.#console = undefined;
+		}
+
+		let sessionPath: string | undefined;
+		let cwd = path.resolve(request.cwd ?? process.cwd());
+		if (request.mode === "session") {
+			if (!request.sessionId) throw new GuiBackendError("invalid_session", "A sessionId is required.");
+			const record = this.#store().get(request.sessionId);
+			if (!record)
+				throw new GuiBackendError("read_only_session", "Only daemon-managed sessions can enter the full console.");
+			await this.#releaseRuntime(request.sessionId);
+			sessionPath = record.path;
+			cwd = record.cwd;
+		} else {
+			await this.#validateDirectory(cwd);
+		}
+
+		this.#console = new GuiConsoleSession(
+			{
+				mode: request.mode,
+				sessionId: request.sessionId,
+				sessionPath,
+				cwd,
+				commandLine: request.commandLine,
+				cols: request.cols,
+				rows: request.rows,
+			},
+			(event, state) => {
+				for (const listener of this.#listeners) {
+					listener({ event, sessionId: state.sessionId, data: state });
+				}
+			},
+		);
+		return this.#console.state();
+	}
+
+	writeConsole(consoleId: string, data: string): void {
+		this.#consoleForId(consoleId).write(data);
+	}
+
+	resizeConsole(consoleId: string, cols: number, rows: number): GuiConsoleState {
+		const console = this.#consoleForId(consoleId);
+		console.resize(cols, rows);
+		return console.state();
+	}
+
+	async stopConsole(consoleId: string): Promise<GuiConsoleState> {
+		const console = this.#consoleForId(consoleId);
+		await console.stop();
+		return console.state();
+	}
+
 	async shutdownSession(sessionId: string): Promise<void> {
 		if (!this.#store().has(sessionId)) {
 			throw new GuiBackendError("read_only_session", "Only daemon-managed sessions may be shut down.");
 		}
-		const runtime = this.#runtimes.get(sessionId);
-		if (runtime) {
-			if (runtime.session.isStreaming) await runtime.session.abort({ reason: "Explicit GUI shutdown" });
-			runtime.unsubscribe();
-			await runtime.session.dispose();
-			this.#runtimes.delete(sessionId);
+		if (this.#console?.state().sessionId === sessionId) {
+			await this.#console.stop();
+			await this.#console.dispose();
+			this.#console = undefined;
 		}
+		await this.#releaseRuntime(sessionId, true);
 		await this.#store().delete(sessionId);
 	}
 
@@ -233,6 +319,9 @@ export class OmpGuiBackend implements GuiBackend {
 	}
 
 	async dispose(): Promise<void> {
+		const console = this.#console;
+		this.#console = undefined;
+		await console?.dispose();
 		const runtimes = [...this.#runtimes.values()];
 		this.#runtimes.clear();
 		await Promise.all(
@@ -243,6 +332,37 @@ export class OmpGuiBackend implements GuiBackend {
 		);
 	}
 
+	async #validateDirectory(directory: string): Promise<void> {
+		let stat: Stats;
+		try {
+			stat = await fs.stat(directory);
+		} catch (error) {
+			throw new GuiBackendError("invalid_cwd", `Working directory is unavailable: ${toError(error).message}`);
+		}
+		if (!stat.isDirectory()) throw new GuiBackendError("invalid_cwd", "Working directory must be a directory.");
+	}
+
+	async #releaseRuntime(sessionId: string, abort = false): Promise<void> {
+		const runtime = this.#runtimes.get(sessionId);
+		if (!runtime) return;
+		if (runtime.session.isStreaming) {
+			if (!abort)
+				throw new GuiBackendError("session_busy", "Wait for the active operation before opening the console.");
+			await runtime.session.abort({ reason: "Explicit GUI shutdown" });
+		}
+		runtime.unsubscribe();
+		await runtime.session.dispose();
+		this.#runtimes.delete(sessionId);
+	}
+
+	#consoleForId(consoleId: string): GuiConsoleSession {
+		const console = this.#console;
+		if (!console || console.state().consoleId !== consoleId) {
+			throw new GuiBackendError("console_not_found", "OMP console does not exist.");
+		}
+		return console;
+	}
+
 	async #findSession(sessionId: string): Promise<SessionInfo> {
 		const session = (await SessionManager.listAll(this.#storage)).find(item => item.id === sessionId);
 		if (!session) throw new GuiBackendError("session_not_found", "Session does not exist.");
@@ -250,6 +370,10 @@ export class OmpGuiBackend implements GuiBackend {
 	}
 
 	async #runtimeForOwned(sessionId: string): Promise<ManagedRuntime> {
+		const consoleState = this.#console?.state();
+		if (consoleState?.sessionId === sessionId && consoleState.status !== "exited") {
+			throw new GuiBackendError("console_active", "Close the full OMP console before using the native composer.");
+		}
 		const existing = this.#runtimes.get(sessionId);
 		if (existing) return existing;
 		const record = this.#store().get(sessionId);

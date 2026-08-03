@@ -9,6 +9,13 @@ export const GUI_CAPABILITIES = [
 	"sessions.prompt",
 	"sessions.reconcile",
 	"sessions.shutdown.confirmed",
+	"controls.catalog",
+	"console.start",
+	"console.state",
+	"console.input",
+	"console.resize",
+	"console.stop",
+	"events.console",
 	"events.message.incremental",
 	"events.tool",
 ] as const;
