@@ -48,6 +48,10 @@ export const gcHelp = { description: "Run storage garbage collection" } satisfie
 
 export const grepHelp = { description: "Test grep tool" } satisfies CommandMetadata;
 
+export const guiServerHelp = {
+	description: "Run the local native-GUI session daemon over a Unix socket",
+} satisfies CommandMetadata;
+
 export const grievancesHelp = {
 	description: "View, clean, or push reported tool issues (auto-QA grievances)",
 } satisfies CommandMetadata;

@@ -35,6 +35,9 @@
 - Fixed issues with `/btw` branch promotion where branches could park behind active turns, cut from outdated session leaves, or leave rejected branch keys indistinguishable from composer input.
 - Fixed database bloat by ensuring archived main and nested session rows are properly cleaned up from `stats.db` during garbage collection.
 - Fixed startup hanging during local model discovery when a timed-out transport left its request pending, which blocked the CLI before OAuth login could finish ([#7482](https://github.com/can1357/oh-my-pi/issues/7482)).
+### Added
+
+- Added `omp gui-server`, a versioned Unix-socket daemon for native clients with capability negotiation, managed session ownership, transcript streaming and reconciliation, and confirmed shutdown.
 
 ## [17.2.5] - 2026-08-03
 
