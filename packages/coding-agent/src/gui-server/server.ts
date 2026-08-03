@@ -17,12 +17,16 @@ import {
 
 const SHUTDOWN_CONFIRMATION_TTL_MS = 30_000;
 const MAX_RETAINED_OPERATIONS = 256;
+const GUI_FRAME_ENCODER = new TextEncoder();
 
 interface ConnectionState {
 	connectionId: string;
 	decoder: TextDecoder;
 	input: string;
 	negotiated: boolean;
+	output: Uint8Array[];
+	outputIndex: number;
+	outputByteOffset: number;
 }
 
 interface GuiOperation {
@@ -50,6 +54,17 @@ function requiredString(params: Record<string, unknown>, key: string): string {
 	return value;
 }
 
+function requiredRawString(params: Record<string, unknown>, key: string, maxBytes: number): string {
+	const value = params[key];
+	if (typeof value !== "string" || value.length === 0) {
+		throw new GuiBackendError("invalid_params", `${key} must be a non-empty string.`);
+	}
+	if (Buffer.byteLength(value) > maxBytes) {
+		throw new GuiBackendError("invalid_params", `${key} exceeds the maximum size.`);
+	}
+	return value;
+}
+
 function optionalString(params: Record<string, unknown>, key: string): string | undefined {
 	const value = params[key];
 	if (value === undefined) return undefined;
@@ -64,6 +79,14 @@ function optionalNumber(params: Record<string, unknown>, key: string): number | 
 		throw new GuiBackendError("invalid_params", `${key} must be a finite number.`);
 	}
 	return value;
+}
+
+function requiredInteger(params: Record<string, unknown>, key: string, minimum: number, maximum: number): number {
+	const value = params[key];
+	if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+		throw new GuiBackendError("invalid_params", `${key} must be an integer between ${minimum} and ${maximum}.`);
+	}
+	return value as number;
 }
 
 export class OmpGuiServer {
@@ -104,10 +127,14 @@ export class OmpGuiServer {
 						decoder: new TextDecoder(),
 						input: "",
 						negotiated: false,
+						output: [],
+						outputIndex: 0,
+						outputByteOffset: 0,
 					};
 					this.#connections.add(socket);
 				},
 				data: (socket, data) => this.#receive(socket, data),
+				drain: socket => this.#flush(socket),
 				close: socket => {
 					this.#connections.delete(socket);
 				},
@@ -220,6 +247,61 @@ export class OmpGuiServer {
 						);
 					}
 					break;
+				case "get_control_catalog":
+					this.#write(
+						socket,
+						guiResponse(request, {
+							catalog: await this.#backend.controlCatalog(optionalString(request.params, "sessionId")),
+						}),
+					);
+					break;
+				case "console_state":
+					this.#write(socket, guiResponse(request, { console: this.#backend.consoleState() }));
+					break;
+				case "start_console":
+					{
+						const mode = requiredString(request.params, "mode");
+						if (mode !== "session" && mode !== "command") {
+							throw new GuiBackendError("invalid_params", "mode must be session or command.");
+						}
+						const console = await this.#backend.startConsole({
+							mode,
+							sessionId: optionalString(request.params, "sessionId"),
+							commandLine: optionalString(request.params, "commandLine"),
+							cwd: optionalString(request.params, "cwd"),
+							cols: optionalNumber(request.params, "cols"),
+							rows: optionalNumber(request.params, "rows"),
+						});
+						this.#write(socket, guiResponse(request, { console }));
+					}
+					break;
+				case "console_input":
+					{
+						const consoleId = requiredString(request.params, "consoleId");
+						this.#backend.writeConsole(consoleId, requiredRawString(request.params, "data", 64 * 1024));
+						this.#write(socket, guiResponse(request, { accepted: true }));
+					}
+					break;
+				case "console_resize":
+					this.#write(
+						socket,
+						guiResponse(request, {
+							console: this.#backend.resizeConsole(
+								requiredString(request.params, "consoleId"),
+								requiredInteger(request.params, "cols", 40, 300),
+								requiredInteger(request.params, "rows", 10, 120),
+							),
+						}),
+					);
+					break;
+				case "stop_console":
+					this.#write(
+						socket,
+						guiResponse(request, {
+							console: await this.#backend.stopConsole(requiredString(request.params, "consoleId")),
+						}),
+					);
+					break;
 				case "prompt":
 					this.#acceptPrompt(socket, request);
 					break;
@@ -230,6 +312,7 @@ export class OmpGuiServer {
 							sessions: await this.#backend.listSessions(),
 							operations: [...this.#operations.values()],
 							liveMessages: this.#backend.liveMessages(),
+							console: this.#backend.consoleState(),
 						}),
 					);
 					break;
@@ -435,7 +518,37 @@ export class OmpGuiServer {
 
 	#write(socket: Bun.Socket<ConnectionState>, frame: GuiServerFrame): void {
 		try {
-			socket.write(`${JSON.stringify(frame)}\n`);
+			const encoded = GUI_FRAME_ENCODER.encode(`${JSON.stringify(frame)}\n`);
+			if (encoded.byteLength > GUI_MAX_FRAME_BYTES) {
+				socket.close();
+				return;
+			}
+			socket.data.output.push(encoded);
+			this.#flush(socket);
+		} catch {
+			socket.close();
+		}
+	}
+
+	#flush(socket: Bun.Socket<ConnectionState>): void {
+		const state = socket.data;
+		try {
+			while (state.outputIndex < state.output.length) {
+				const bytes = state.output[state.outputIndex] as Uint8Array;
+				const remaining = bytes.byteLength - state.outputByteOffset;
+				const written = socket.write(bytes, state.outputByteOffset, remaining);
+				if (written < 0) {
+					socket.close();
+					return;
+				}
+				if (written === 0) return;
+				state.outputByteOffset += written;
+				if (state.outputByteOffset < bytes.byteLength) return;
+				state.outputIndex += 1;
+				state.outputByteOffset = 0;
+			}
+			state.output = [];
+			state.outputIndex = 0;
 		} catch {
 			socket.close();
 		}

@@ -2,17 +2,25 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { commands } from "../src/cli-commands";
+import { KEYBINDINGS } from "../src/config/keybindings";
+import { SETTINGS_SCHEMA } from "../src/config/settings-schema";
+import { OmpGuiBackend } from "../src/gui-server/backend";
 import type {
 	GuiBackend,
 	GuiBackendEvent,
+	GuiConsoleRequest,
 	GuiLiveMessage,
 	GuiSessionSummary,
 	GuiTranscriptPage,
 } from "../src/gui-server/backend-types";
 import { GuiBackendError } from "../src/gui-server/backend-types";
+import { GuiConsoleSession, type GuiConsoleState } from "../src/gui-server/console";
+import { buildGuiControlCatalog, type GuiControlCatalog } from "../src/gui-server/control-catalog";
 import { ManagedSessionStore } from "../src/gui-server/managed-session-store";
 import { GUI_PROTOCOL_VERSION } from "../src/gui-server/protocol";
 import { GuiServer } from "../src/gui-server/server";
+import { BUILTIN_SLASH_COMMANDS_INTERNAL } from "../src/slash-commands/builtin-registry";
 
 interface TestFrame {
 	protocolVersion: number;
@@ -29,6 +37,8 @@ interface TestFrame {
 class FakeBackend implements GuiBackend {
 	readonly #listeners = new Set<(event: GuiBackendEvent) => void>();
 	readonly #sessions = new Map<string, GuiSessionSummary>();
+	#console: GuiConsoleState | undefined;
+	largeCatalog = false;
 	#createCount = 0;
 
 	constructor() {
@@ -80,6 +90,72 @@ class FakeBackend implements GuiBackend {
 		this.#emit({ event: "message_delta", sessionId, operationId, data: { delta: "fixture", contentIndex: 0 } });
 		await Bun.sleep(5);
 		return { agentInvoked: true };
+	}
+
+	async controlCatalog(_sessionId?: string): Promise<GuiControlCatalog> {
+		if (this.largeCatalog) {
+			return {
+				keybindingCount: 0,
+				slashCommandCount: 0,
+				settingCount: 1,
+				cliCommandCount: 0,
+				cliOptionCount: 0,
+				cliArgumentCount: 0,
+				items: [{ kind: "setting", id: "setting:large", title: "Large", detail: "x".repeat(900_000) }],
+			};
+		}
+		return {
+			keybindingCount: 0,
+			slashCommandCount: 0,
+			settingCount: 0,
+			cliCommandCount: 0,
+			cliOptionCount: 0,
+			cliArgumentCount: 0,
+			items: [],
+		};
+	}
+
+	consoleState(): GuiConsoleState | undefined {
+		return this.#console;
+	}
+
+	async startConsole(request: GuiConsoleRequest): Promise<GuiConsoleState> {
+		this.#console = {
+			consoleId: "test-console",
+			mode: request.mode,
+			status: "running",
+			sessionId: request.sessionId,
+			commandLine: request.commandLine ?? "omp launch",
+			cwd: request.cwd ?? "/tmp/project",
+			cols: request.cols ?? 120,
+			rows: request.rows ?? 40,
+			screen: "OMP console",
+			cursorX: 0,
+			cursorY: 0,
+		};
+		return this.#console;
+	}
+
+	writeConsole(consoleId: string, data: string): void {
+		if (!this.#console || this.#console.consoleId !== consoleId)
+			throw new GuiBackendError("console_not_found", "missing");
+		this.#console.screen += data;
+	}
+
+	resizeConsole(consoleId: string, cols: number, rows: number): GuiConsoleState {
+		if (!this.#console || this.#console.consoleId !== consoleId)
+			throw new GuiBackendError("console_not_found", "missing");
+		this.#console.cols = cols;
+		this.#console.rows = rows;
+		return this.#console;
+	}
+
+	async stopConsole(consoleId: string): Promise<GuiConsoleState> {
+		if (!this.#console || this.#console.consoleId !== consoleId)
+			throw new GuiBackendError("console_not_found", "missing");
+		this.#console.status = "exited";
+		this.#console.exitCode = 0;
+		return this.#console;
 	}
 
 	async shutdownSession(sessionId: string): Promise<void> {
@@ -257,6 +333,53 @@ describe("GUI server protocol", () => {
 			(catalog.data as { sessions: GuiSessionSummary[] }).sessions.some(session => session.id === sessionId),
 		).toBe(false);
 	});
+
+	test("exposes catalog and persistent console lifecycle commands", async () => {
+		const { socketPath } = await setup();
+		const client = await connectNegotiated(socketPath);
+		const catalog = await client.request("catalog", "get_control_catalog");
+		expect(catalog.data).toEqual({ catalog: expect.objectContaining({ items: [] }) });
+
+		const started = await client.request("console-start", "start_console", {
+			mode: "command",
+			commandLine: "models --json",
+			cwd: "/tmp/project",
+			cols: 100,
+			rows: 30,
+		});
+		const consoleId = "test-console";
+		expect(started.data).toEqual({ console: expect.objectContaining({ consoleId }) });
+		expect((await client.request("console-input", "console_input", { consoleId, data: "x" })).ok).toBe(true);
+		const state = await client.request("console-state", "console_state");
+		expect(state.data).toEqual({ console: expect.objectContaining({ screen: "OMP consolex" }) });
+		const resized = await client.request("console-resize", "console_resize", { consoleId, cols: 90, rows: 24 });
+		expect(resized.data).toEqual({ console: expect.objectContaining({ cols: 90, rows: 24 }) });
+		const stopped = await client.request("console-stop", "stop_console", { consoleId });
+		expect(stopped.data).toEqual({ console: expect.objectContaining({ status: "exited" }) });
+	});
+});
+test("serializes concurrent responses under socket backpressure", async () => {
+	const { backend, socketPath } = await setup();
+	backend.largeCatalog = true;
+	const client = await connectNegotiated(socketPath);
+	client.send("large-catalog", "get_control_catalog");
+	client.send("parallel-health", "health");
+	client.send("parallel-reconcile", "reconcile");
+	const [catalog, health, reconcile] = await Promise.all([
+		client.next(frame => frame.requestId === "large-catalog"),
+		client.next(frame => frame.requestId === "parallel-health"),
+		client.next(frame => frame.requestId === "parallel-reconcile"),
+	]);
+	expect(catalog).toEqual(
+		expect.objectContaining({
+			ok: true,
+			data: expect.objectContaining({
+				catalog: expect.objectContaining({ settingCount: 1 }),
+			}),
+		}),
+	);
+	expect(health.ok).toBe(true);
+	expect(reconcile.ok).toBe(true);
 });
 
 describe("managed GUI session ownership", () => {
@@ -278,5 +401,113 @@ describe("managed GUI session ownership", () => {
 		await expect(
 			ManagedSessionStore.create(temporaryDirectory).then(reloaded => reloaded.get(record.id)),
 		).resolves.toEqual(record);
+	});
+});
+
+describe("GUI console process", () => {
+	test("runs a fixed executable in a PTY and retains the final emulated screen", async () => {
+		if (process.platform === "win32") return;
+		const previousCommand = Bun.env.PI_SUBPROCESS_CMD;
+		Bun.env.PI_SUBPROCESS_CMD = "/bin/echo";
+		const exited = Promise.withResolvers<GuiConsoleState>();
+		const events: string[] = [];
+		const console = new GuiConsoleSession(
+			{
+				mode: "command",
+				commandLine: "models --json",
+				cwd: process.cwd(),
+				cols: 80,
+				rows: 24,
+			},
+			(event, state) => {
+				events.push(event);
+				if (event === "console_exited") exited.resolve(state);
+			},
+		);
+		try {
+			const state = await exited.promise;
+			expect(events).toContain("console_started");
+			expect(events).toContain("console_exited");
+			expect(state.status).toBe("exited");
+			expect(state.commandLine).toBe("omp models --json");
+			expect(state.screen).toContain("models --json");
+			expect(state.exitCode).toBe(0);
+		} finally {
+			await console.dispose();
+			if (previousCommand === undefined) {
+				delete Bun.env.PI_SUBPROCESS_CMD;
+			} else {
+				Bun.env.PI_SUBPROCESS_CMD = previousCommand;
+			}
+		}
+	});
+
+	test("backend accepts the first console and publishes its lifecycle", async () => {
+		if (process.platform === "win32") return;
+		temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "omp-gui-console-test-"));
+		const previousCommand = Bun.env.PI_SUBPROCESS_CMD;
+		Bun.env.PI_SUBPROCESS_CMD = "/bin/echo";
+		const backend = await OmpGuiBackend.create({ stateDir: temporaryDirectory });
+		const exited = Promise.withResolvers<GuiConsoleState>();
+		const unsubscribe = backend.subscribe(event => {
+			const current = backend.consoleState();
+			if (event.event === "console_exited" && current) exited.resolve(current);
+		});
+		try {
+			const started = await backend.startConsole({
+				mode: "command",
+				commandLine: "--version",
+				cwd: process.cwd(),
+			});
+			expect(started.status).not.toBe("exited");
+			expect((await exited.promise).exitCode).toBe(0);
+		} finally {
+			unsubscribe();
+			await backend.dispose();
+			if (previousCommand === undefined) {
+				delete Bun.env.PI_SUBPROCESS_CMD;
+			} else {
+				Bun.env.PI_SUBPROCESS_CMD = previousCommand;
+			}
+		}
+	});
+});
+
+describe("GUI control catalog parity", () => {
+	test("exports every canonical keybinding, slash command, setting, CLI command, option, and argument", async () => {
+		const catalog = await buildGuiControlCatalog();
+		const ids = new Set(catalog.items.map(item => item.id));
+
+		expect(catalog.keybindingCount).toBe(Object.keys(KEYBINDINGS).length);
+		for (const id of Object.keys(KEYBINDINGS)) expect(ids.has(id)).toBe(true);
+
+		expect(catalog.slashCommandCount).toBe(BUILTIN_SLASH_COMMANDS_INTERNAL.length);
+		for (const command of BUILTIN_SLASH_COMMANDS_INTERNAL) {
+			expect(ids.has(`slash:${command.name}`)).toBe(true);
+			for (const subcommand of command.subcommands ?? []) {
+				expect(ids.has(`slash:${command.name}:${subcommand.name}`)).toBe(true);
+			}
+		}
+
+		expect(catalog.settingCount).toBe(Object.keys(SETTINGS_SCHEMA).length);
+		for (const path of Object.keys(SETTINGS_SCHEMA)) expect(ids.has(`setting:${path}`)).toBe(true);
+
+		expect(catalog.cliCommandCount).toBe(commands.length);
+		let flagCount = 0;
+		let argumentCount = 0;
+		for (const entry of commands) {
+			expect(ids.has(`cli:${entry.name}`)).toBe(true);
+			const command = await entry.load();
+			for (const flag of Object.keys(command.flags ?? {})) {
+				flagCount += 1;
+				expect([...ids]).toContain(`cli-option:${entry.name}:${flag}`);
+			}
+			for (const argument of Object.keys(command.args ?? {})) {
+				argumentCount += 1;
+				expect([...ids]).toContain(`cli-argument:${entry.name}:${argument}`);
+			}
+		}
+		expect(catalog.cliOptionCount).toBe(flagCount);
+		expect(catalog.cliArgumentCount).toBe(argumentCount);
 	});
 });
