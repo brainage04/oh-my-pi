@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `omp gui-server`, a versioned Unix-socket daemon for native clients with capability negotiation, managed session ownership, transcript streaming and reconciliation, and confirmed shutdown.
+
 ## [17.2.5] - 2026-08-03
 
 ### Breaking Changes

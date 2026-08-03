@@ -86,6 +86,11 @@ export const commands: CommandEntry[] = [
 		help: commandHelp.grepHelp,
 	},
 	{
+		name: "gui-server",
+		load: () => import("./commands/gui-server").then(m => m.default),
+		help: commandHelp.guiServerHelp,
+	},
+	{
 		name: "gallery",
 		load: () => import("./commands/gallery").then(m => m.default),
 		help: commandHelp.galleryHelp,
