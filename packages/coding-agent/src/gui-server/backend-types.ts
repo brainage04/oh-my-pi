@@ -37,6 +37,7 @@ export interface GuiBackendEvent {
 		| "tool_completed"
 		| "console_started"
 		| "console_updated"
+		| "console_output"
 		| "console_exited";
 	sessionId?: string;
 	operationId?: string;

@@ -24,6 +24,7 @@ interface ConnectionState {
 	decoder: TextDecoder;
 	input: string;
 	negotiated: boolean;
+	rawConsoleId?: string;
 	output: Uint8Array[];
 	outputIndex: number;
 	outputByteOffset: number;
@@ -63,6 +64,20 @@ function requiredRawString(params: Record<string, unknown>, key: string, maxByte
 		throw new GuiBackendError("invalid_params", `${key} exceeds the maximum size.`);
 	}
 	return value;
+}
+
+function requiredBase64Utf8(params: Record<string, unknown>, key: string, maxBytes: number): string {
+	const encoded = requiredRawString(params, key, Math.ceil((maxBytes * 4) / 3) + 4);
+	const decoded = Buffer.from(encoded, "base64");
+	if (
+		decoded.byteLength === 0 ||
+		decoded.byteLength > maxBytes ||
+		decoded.toString("base64") !== encoded ||
+		!Buffer.from(decoded.toString("utf8"), "utf8").equals(decoded)
+	) {
+		throw new GuiBackendError("invalid_params", `${key} must contain canonical base64-encoded UTF-8 input.`);
+	}
+	return decoded.toString("utf8");
 }
 
 function optionalString(params: Record<string, unknown>, key: string): string | undefined {
@@ -261,6 +276,17 @@ export class OmpGuiServer {
 				case "console_state":
 					this.#write(socket, guiResponse(request, { console: this.#backend.consoleState() }));
 					break;
+				case "console_attach":
+					{
+						const consoleId = requiredString(request.params, "consoleId");
+						const console = this.#backend.consoleState();
+						if (!console || console.consoleId !== consoleId || console.status === "exited") {
+							throw new GuiBackendError("console_not_found", "OMP console does not exist.");
+						}
+						socket.data.rawConsoleId = consoleId;
+						this.#write(socket, guiResponse(request, { console }));
+					}
+					break;
 				case "start_console":
 					{
 						const mode = requiredString(request.params, "mode");
@@ -282,6 +308,13 @@ export class OmpGuiServer {
 					{
 						const consoleId = requiredString(request.params, "consoleId");
 						this.#backend.writeConsole(consoleId, requiredRawString(request.params, "data", 64 * 1024));
+						this.#write(socket, guiResponse(request, { accepted: true }));
+					}
+					break;
+				case "console_input_raw":
+					{
+						const consoleId = requiredString(request.params, "consoleId");
+						this.#backend.writeConsole(consoleId, requiredBase64Utf8(request.params, "dataBase64", 64 * 1024));
 						this.#write(socket, guiResponse(request, { accepted: true }));
 					}
 					break;
@@ -496,12 +529,21 @@ export class OmpGuiServer {
 	}
 
 	#broadcastBackendEvent(event: GuiBackendEvent): void {
-		this.#broadcast(
-			guiEvent(event.event, event.data, {
-				operationId: event.operationId,
-				sessionId: event.sessionId,
-			}),
-		);
+		const frame = guiEvent(event.event, event.data, {
+			operationId: event.operationId,
+			sessionId: event.sessionId,
+		});
+		if (event.event === "console_output") {
+			const consoleId =
+				typeof event.data === "object" && event.data !== null && "consoleId" in event.data
+					? event.data.consoleId
+					: undefined;
+			for (const socket of this.#connections) {
+				if (socket.data.negotiated && socket.data.rawConsoleId === consoleId) this.#write(socket, frame);
+			}
+			return;
+		}
+		this.#broadcast(frame);
 	}
 
 	#emitOperation(operation: GuiOperation): void {

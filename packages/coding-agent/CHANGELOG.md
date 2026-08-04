@@ -5,6 +5,7 @@
 ### Added
 
 - Added writable GUI forks for existing stock OMP sessions, preserving the source session while allowing native clients to continue its context.
+- Added connection-scoped raw console attachment and base64 terminal input for renderer frontends that reuse daemon-owned OMP sessions and PTYs.
 
 ## [17.2.7] - 2026-08-03
 

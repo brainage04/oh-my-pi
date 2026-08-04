@@ -47,6 +47,14 @@ export type GuiConsoleListener = (
 	state: GuiConsoleState,
 ) => void;
 
+export interface GuiConsoleOutput {
+	consoleId: string;
+	sessionId?: string;
+	dataBase64: string;
+}
+
+export type GuiConsoleOutputListener = (output: GuiConsoleOutput) => void;
+
 function boundedDimension(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
 	if (value === undefined) return fallback;
 	if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
@@ -78,6 +86,7 @@ export class GuiConsoleSession {
 	readonly #pty = new PtySession();
 	readonly #terminal: Terminal;
 	readonly #listener: GuiConsoleListener;
+	readonly #outputListener: GuiConsoleOutputListener;
 	readonly #mode: GuiConsoleMode;
 	readonly #sessionId: string | undefined;
 	readonly #cwd: string;
@@ -93,7 +102,11 @@ export class GuiConsoleSession {
 	#runPromise: Promise<void>;
 	#writePromise = Promise.resolve();
 
-	constructor(options: GuiConsoleStartOptions, listener: GuiConsoleListener) {
+	constructor(
+		options: GuiConsoleStartOptions,
+		listener: GuiConsoleListener,
+		outputListener: GuiConsoleOutputListener = () => {},
+	) {
 		this.#mode = options.mode;
 		this.#sessionId = options.sessionId;
 		this.#cwd = options.cwd;
@@ -101,6 +114,7 @@ export class GuiConsoleSession {
 		this.#rows = boundedDimension(options.rows, DEFAULT_ROWS, MIN_ROWS, MAX_ROWS);
 		this.#terminal = new Terminal({ cols: this.#cols, rows: this.#rows, allowProposedApi: true });
 		this.#listener = listener;
+		this.#outputListener = outputListener;
 		const args = resolveArguments(options);
 		this.#commandLine = displayCommand(args);
 		this.#runPromise = this.#run(args);
@@ -210,6 +224,11 @@ export class GuiConsoleSession {
 	}
 
 	#writeTerminal(data: string): void {
+		this.#outputListener({
+			consoleId: this.#consoleId,
+			sessionId: this.#sessionId,
+			dataBase64: Buffer.from(data).toString("base64"),
+		});
 		this.#writePromise = this.#writePromise.then(() => {
 			const { promise, resolve } = Promise.withResolvers<void>();
 			this.#terminal.write(data, () => {

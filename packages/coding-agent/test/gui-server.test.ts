@@ -148,6 +148,15 @@ class FakeBackend implements GuiBackend {
 		if (!this.#console || this.#console.consoleId !== consoleId)
 			throw new GuiBackendError("console_not_found", "missing");
 		this.#console.screen += data;
+		this.#emit({
+			event: "console_output",
+			sessionId: this.#console.sessionId,
+			data: {
+				consoleId,
+				sessionId: this.#console.sessionId,
+				dataBase64: Buffer.from(data).toString("base64"),
+			},
+		});
 	}
 
 	resizeConsole(consoleId: string, cols: number, rows: number): GuiConsoleState {
@@ -247,6 +256,10 @@ class TestClient {
 	async request(requestId: string, command: string, params: Record<string, unknown> = {}): Promise<TestFrame> {
 		this.send(requestId, command, params);
 		return await this.next(frame => frame.kind === "response" && frame.requestId === requestId);
+	}
+
+	hasFrame(predicate: (frame: TestFrame) => boolean): boolean {
+		return this.#frames.some(predicate);
 	}
 
 	close(): void {
@@ -368,6 +381,7 @@ describe("GUI server protocol", () => {
 	test("exposes catalog and persistent console lifecycle commands", async () => {
 		const { socketPath } = await setup();
 		const client = await connectNegotiated(socketPath);
+		const observer = await connectNegotiated(socketPath);
 		const catalog = await client.request("catalog", "get_control_catalog");
 		expect(catalog.data).toEqual({ catalog: expect.objectContaining({ items: [] }) });
 
@@ -380,12 +394,50 @@ describe("GUI server protocol", () => {
 		});
 		const consoleId = "test-console";
 		expect(started.data).toEqual({ console: expect.objectContaining({ consoleId }) });
-		expect((await client.request("console-input", "console_input", { consoleId, data: "x" })).ok).toBe(true);
-		const state = await client.request("console-state", "console_state");
-		expect(state.data).toEqual({ console: expect.objectContaining({ screen: "OMP consolex" }) });
-		const resized = await client.request("console-resize", "console_resize", { consoleId, cols: 90, rows: 24 });
+		expect((await client.request("console-attach", "console_attach", { consoleId })).data).toEqual({
+			console: expect.objectContaining({ consoleId, status: "running" }),
+		});
+		const arrow = "\u001b[A";
+		expect(
+			(
+				await client.request("console-input-raw", "console_input_raw", {
+					consoleId,
+					dataBase64: Buffer.from(arrow).toString("base64"),
+				})
+			).ok,
+		).toBe(true);
+		const raw = await client.next(frame => frame.event === "console_output");
+		expect(raw.data).toEqual({
+			consoleId,
+			sessionId: undefined,
+			dataBase64: Buffer.from(arrow).toString("base64"),
+		});
+		await observer.request("observer-barrier", "health");
+		expect(observer.hasFrame(frame => frame.event === "console_output")).toBe(false);
+		expect(
+			(
+				await client.request("console-input-invalid", "console_input_raw", {
+					consoleId,
+					dataBase64: "***",
+				})
+			).error?.code,
+		).toBe("invalid_params");
+
+		client.close();
+		const persistent = await observer.request("console-state-after-disconnect", "console_state");
+		expect(persistent.data).toEqual({ console: expect.objectContaining({ consoleId, status: "running" }) });
+		expect((await observer.request("console-reattach", "console_attach", { consoleId })).ok).toBe(true);
+		await observer.request("console-input-resumed", "console_input_raw", {
+			consoleId,
+			dataBase64: Buffer.from("x").toString("base64"),
+		});
+		const resumedRaw = await observer.next(frame => frame.event === "console_output");
+		expect(Buffer.from((resumedRaw.data as { dataBase64: string }).dataBase64, "base64").toString()).toBe("x");
+		const state = await observer.request("console-state", "console_state");
+		expect(state.data).toEqual({ console: expect.objectContaining({ screen: `OMP console${arrow}x` }) });
+		const resized = await observer.request("console-resize", "console_resize", { consoleId, cols: 90, rows: 24 });
 		expect(resized.data).toEqual({ console: expect.objectContaining({ cols: 90, rows: 24 }) });
-		const stopped = await client.request("console-stop", "stop_console", { consoleId });
+		const stopped = await observer.request("console-stop", "stop_console", { consoleId });
 		expect(stopped.data).toEqual({ console: expect.objectContaining({ status: "exited" }) });
 	});
 });
@@ -442,6 +494,7 @@ describe("GUI console process", () => {
 		Bun.env.PI_SUBPROCESS_CMD = "/bin/echo";
 		const exited = Promise.withResolvers<GuiConsoleState>();
 		const events: string[] = [];
+		const rawOutput: string[] = [];
 		const console = new GuiConsoleSession(
 			{
 				mode: "command",
@@ -454,6 +507,7 @@ describe("GUI console process", () => {
 				events.push(event);
 				if (event === "console_exited") exited.resolve(state);
 			},
+			output => rawOutput.push(Buffer.from(output.dataBase64, "base64").toString()),
 		);
 		try {
 			const state = await exited.promise;
@@ -463,6 +517,7 @@ describe("GUI console process", () => {
 			expect(state.commandLine).toBe("omp models --json");
 			expect(state.screen).toContain("models --json");
 			expect(state.exitCode).toBe(0);
+			expect(rawOutput.join("")).toContain("models --json");
 		} finally {
 			await console.dispose();
 			if (previousCommand === undefined) {

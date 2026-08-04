@@ -313,6 +313,15 @@ export class OmpGuiBackend implements GuiBackend {
 					listener({ event, sessionId: state.sessionId, data: state });
 				}
 			},
+			output => {
+				for (const listener of this.#listeners) {
+					listener({
+						event: "console_output",
+						sessionId: output.sessionId,
+						data: output,
+					});
+				}
+			},
 		);
 		return this.#console.state();
 	}

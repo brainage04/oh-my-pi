@@ -13,10 +13,13 @@ export const GUI_CAPABILITIES = [
 	"controls.catalog",
 	"console.start",
 	"console.state",
+	"console.attach",
 	"console.input",
+	"console.input.raw",
 	"console.resize",
 	"console.stop",
 	"events.console",
+	"events.console.raw",
 	"events.message.incremental",
 	"events.tool",
 ] as const;
