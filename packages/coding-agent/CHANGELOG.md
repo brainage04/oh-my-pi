@@ -6,6 +6,7 @@
 
 - Added `omp gui-server`, a versioned Unix-socket daemon for native clients with capability negotiation, managed session ownership, transcript streaming and reconciliation, and confirmed shutdown.
 - Added a daemon-owned full OMP PTY console and source-generated GUI control catalog covering every keybinding, slash command, setting, CLI command, option, and argument.
+- Added an authenticated, loopback-only WebSocket proxy for Tailnet native clients, with mode-0600 bearer-token loading and lossless Unix-socket protocol bridging.
 
 ## [17.2.5] - 2026-08-03
 
