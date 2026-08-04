@@ -69,6 +69,14 @@ class FakeBackend implements GuiBackend {
 		return session;
 	}
 
+	async forkSession(sessionId: string, name?: string): Promise<GuiSessionSummary> {
+		if (!this.#sessions.has(sessionId)) throw new GuiBackendError("session_not_found", "missing");
+		const session = this.#summary(`fork-${++this.#createCount}`, true);
+		session.title = name ?? `${sessionId} (GUI fork)`;
+		this.#sessions.set(session.id, session);
+		return session;
+	}
+
 	async transcriptPage(_sessionId: string, _before?: string, _limit?: number): Promise<GuiTranscriptPage> {
 		return { items: [] };
 	}
@@ -296,6 +304,29 @@ describe("GUI server protocol", () => {
 		const catalog = await second.request("list", "list_sessions");
 		const sessions = (catalog.data as { sessions: GuiSessionSummary[] }).sessions;
 		expect(sessions.find(session => session.id === sessionId)?.writable).toBe(true);
+	});
+
+	test("forks a terminal-created session into an independently writable GUI session", async () => {
+		const { socketPath } = await setup();
+		const client = await connectNegotiated(socketPath);
+		const forked = await client.request("fork", "fork_session", {
+			sessionId: "terminal-session",
+			title: "Writable branch",
+		});
+		expect(forked.ok).toBe(true);
+		expect(forked.data).toEqual({
+			session: expect.objectContaining({
+				id: "fork-1",
+				title: "Writable branch",
+				managed: true,
+				writable: true,
+			}),
+		});
+		const sessions = (await client.request("list-after-fork", "list_sessions")).data as {
+			sessions: GuiSessionSummary[];
+		};
+		expect(sessions.sessions.find(session => session.id === "terminal-session")?.writable).toBe(false);
+		expect(sessions.sessions.find(session => session.id === "fork-1")?.writable).toBe(true);
 	});
 
 	test("correlates prompt acceptance, streaming events, and terminal completion", async () => {

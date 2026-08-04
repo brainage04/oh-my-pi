@@ -66,6 +66,7 @@ export interface GuiBackend {
 	identity?(): GuiBackendIdentity;
 	listSessions(): Promise<GuiSessionSummary[]>;
 	createSession(cwd: string, name?: string): Promise<GuiSessionSummary>;
+	forkSession(sessionId: string, name?: string): Promise<GuiSessionSummary>;
 	transcriptPage(sessionId: string, before?: string, limit?: number): Promise<GuiTranscriptPage>;
 	prompt(sessionId: string, text: string, operationId: string): Promise<{ agentInvoked: boolean }>;
 	controlCatalog(sessionId?: string): Promise<GuiControlCatalog>;

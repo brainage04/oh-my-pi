@@ -5,6 +5,7 @@ export const GUI_CAPABILITIES = [
 	"health",
 	"sessions.list",
 	"sessions.create",
+	"sessions.fork",
 	"sessions.transcript.page",
 	"sessions.prompt",
 	"sessions.reconcile",

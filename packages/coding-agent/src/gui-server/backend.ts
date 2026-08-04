@@ -195,6 +195,52 @@ export class OmpGuiBackend implements GuiBackend {
 		}
 	}
 
+	async forkSession(sessionId: string, name?: string): Promise<GuiSessionSummary> {
+		const source = await this.#findSession(sessionId);
+		const resolvedCwd = path.resolve(source.cwd);
+		await this.#validateDirectory(resolvedCwd);
+		const manager = await SessionManager.forkFrom(source.path, resolvedCwd, undefined, this.#storage, {
+			suppressBreadcrumb: true,
+		});
+		const sessionFile = manager.getSessionFile();
+		if (!sessionFile) {
+			await manager.close().catch(() => {});
+			throw new GuiBackendError("session_fork_failed", "Forked session did not create a persistent session file.");
+		}
+		const record: ManagedSessionRecord = {
+			id: manager.getSessionId(),
+			path: sessionFile,
+			cwd: resolvedCwd,
+			createdAt: new Date().toISOString(),
+		};
+		try {
+			const runtime = await this.#createRuntime(record, manager);
+			this.#runtimes.set(record.id, runtime);
+			const sourceTitle = source.title?.trim() || source.firstMessage.trim() || "Untitled session";
+			await runtime.session.setSessionName(name?.trim() || `${sourceTitle} (GUI fork)`, "user");
+			await this.#store().set(record);
+			const info = (await SessionManager.list(resolvedCwd, undefined, this.#storage)).find(
+				item => item.id === record.id,
+			);
+			return info
+				? summaryFromInfo(info, true, runtime, undefined)
+				: {
+						id: record.id,
+						cwd: resolvedCwd,
+						title: name?.trim() || `${sourceTitle} (GUI fork)`,
+						createdAt: record.createdAt,
+						modifiedAt: record.createdAt,
+						messageCount: source.messageCount,
+						managed: true,
+						writable: true,
+						state: "idle",
+					};
+		} catch (error) {
+			await manager.close().catch(() => {});
+			throw error;
+		}
+	}
+
 	async transcriptPage(sessionId: string, before?: string, limit?: number): Promise<GuiTranscriptPage> {
 		const info = await this.#findSession(sessionId);
 		const runtime = this.#runtimes.get(sessionId);

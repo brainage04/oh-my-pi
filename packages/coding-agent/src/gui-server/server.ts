@@ -231,6 +231,9 @@ export class OmpGuiServer {
 				case "create_session":
 					await this.#createSession(socket, request);
 					break;
+				case "fork_session":
+					await this.#forkSession(socket, request);
+					break;
 				case "transcript_page":
 					{
 						const sessionId = requiredString(request.params, "sessionId");
@@ -360,6 +363,15 @@ export class OmpGuiServer {
 	async #createSession(socket: Bun.Socket<ConnectionState>, request: GuiRequestFrame): Promise<void> {
 		const title = optionalString(request.params, "title");
 		const session = await this.#backend.createSession(requiredString(request.params, "cwd"), title);
+		this.#write(socket, guiResponse(request, { session }));
+		this.#broadcast(guiEvent("session_catalog_changed", { session }));
+	}
+
+	async #forkSession(socket: Bun.Socket<ConnectionState>, request: GuiRequestFrame): Promise<void> {
+		const session = await this.#backend.forkSession(
+			requiredString(request.params, "sessionId"),
+			optionalString(request.params, "title"),
+		);
 		this.#write(socket, guiResponse(request, { session }));
 		this.#broadcast(guiEvent("session_catalog_changed", { session }));
 	}

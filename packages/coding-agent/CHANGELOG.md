@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added writable GUI forks for existing stock OMP sessions, preserving the source session while allowing native clients to continue its context.
+
 ## [17.2.7] - 2026-08-03
 
 ### Changed
