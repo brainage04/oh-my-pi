@@ -1028,6 +1028,14 @@ export class SessionManager {
 	/** Set by synchronous appends that land while an atomic replacement is active. */
 	#atomicRewriteDirty = false;
 	/**
+	 * A publish queued by {@link #rewriteAtomically} that has not started
+	 * serializing yet, with the disk epoch it was queued under. A second rewrite
+	 * requested in that window joins it instead of queueing another full-file
+	 * write: the queued task serializes the entries when it runs, so it already
+	 * carries the later in-place changes.
+	 */
+	#queuedRewrite: { readonly epoch: number; readonly done: Promise<void> } | undefined;
+	/**
 	 * Active {@link moveTo} relocation. Concurrent completed appends write a
 	 * full body to the live path: source while it still exists, destination
 	 * once rename has landed (source gone). Never recreates a vacated source.
@@ -1795,10 +1803,17 @@ export class SessionManager {
 	async #rewriteAtomically(): Promise<void> {
 		if (!this.#persist || !this.#sessionFile) return;
 		if (this.#released) return;
+		// A publish queued under the current epoch and not yet started will
+		// serialize the entries when it runs, so it already carries this
+		// request's in-place changes: join it instead of queueing a second
+		// whole-file write in the same turn (prune + title, two prune passes).
+		const queued = this.#queuedRewrite;
+		if (queued && queued.epoch === this.#diskEpoch) return queued.done;
 
 		const startEpoch = this.#diskEpoch;
-		await this.#scheduleDiskWork(
+		const done = this.#scheduleDiskWork(
 			async () => {
+				if (this.#queuedRewrite?.epoch === startEpoch) this.#queuedRewrite = undefined;
 				if (await this.#runFencedAtomicRewrite(startEpoch)) {
 					this.#fileIsCurrent = true;
 					this.#materializeBreadcrumb();
@@ -1808,6 +1823,8 @@ export class SessionManager {
 			},
 			{ epoch: startEpoch },
 		);
+		this.#queuedRewrite = { epoch: startEpoch, done };
+		await done;
 	}
 
 	/**
