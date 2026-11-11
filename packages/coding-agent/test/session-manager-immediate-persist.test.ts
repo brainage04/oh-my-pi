@@ -399,7 +399,7 @@ describe("SessionManager JSONL software-crash durability", () => {
 		const priorId = manager.appendMessage(assistantMessage("prior turn"));
 		const discarded = assistantMessage("");
 		const discardedId = manager.appendMessage(discarded);
-		const serviceTierId = manager.appendServiceTierChange(null);
+		manager.appendServiceTierChange(null);
 		const usageBefore = manager.getUsageStatistics();
 		await manager.discardEntryDurably(discardedId);
 		await manager.close();
@@ -407,22 +407,18 @@ describe("SessionManager JSONL software-crash durability", () => {
 		const reloaded = await SessionManager.open(sessionFile, sessionDir);
 		const branch = reloaded.getBranch();
 		expect(branch.some(entry => entry.id === discardedId)).toBe(false);
-		expect(branch).toContainEqual(expect.objectContaining({ id: serviceTierId, parentId: priorId }));
-		expect(branch.some(entry => entry.type === "model_usage")).toBe(false);
-		expect(reloaded.getEntries()).toContainEqual(
-			expect.objectContaining({
-				type: "model_usage",
-				parentId: serviceTierId,
-				provider: discarded.provider,
-				model: discarded.model,
-				usage: discarded.usage,
-			}),
-		);
+		// The metadata child is re-appended on the kept chain, so the persisted
+		// lines alone select the branch and the discarded entry stays in the
+		// journal, off-branch.
+		const keptTier = branch.find(entry => entry.type === "service_tier_change");
+		expect(keptTier).toMatchObject({ parentId: priorId, serviceTier: null });
+		expect(reloaded.getEntries()).toContainEqual(expect.objectContaining({ id: discardedId }));
+		expect(reloaded.getEntries().some(entry => entry.type === "model_usage")).toBe(false);
 		expect(branch.at(-1)).toMatchObject({
 			type: "branch_summary",
 			summary: "",
 			details: { kind: "discarded-entry-branch", discardedEntryId: discardedId },
-			parentId: serviceTierId,
+			parentId: keptTier?.id,
 		});
 		expect(reloaded.getUsageStatistics()).toEqual(usageBefore);
 		await reloaded.close();
