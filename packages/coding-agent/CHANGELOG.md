@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- A failed turn no longer rewrites the whole session file when it is dropped, so long sessions stop stalling and wearing the disk after provider errors
 - Apple Silicon Nix builds include Apple Foundation Models support instead of silently building without it ([#16584](https://github.com/can1357/oh-my-pi/pull/16584) by [@honsunrise](https://github.com/honsunrise))
 ### Removed
 
