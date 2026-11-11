@@ -19,6 +19,7 @@ import {
 	isEnotdir,
 	isEnotempty,
 	isFsError,
+	isRecord,
 	logger,
 	pathIsWithin,
 	stringifyJson,
@@ -137,8 +138,12 @@ import { recordSessionRecap, recordSessionTitle } from "./session-index";
 const JSONL_SUFFIX_LENGTH = ".jsonl".length;
 const DRAFT_ONLY_SESSION_MARKER = ".draft-only-session";
 const DISCARDED_ENTRY_BRANCH_MARKER = "discarded-entry-branch";
-/** `model_usage` purpose carrying the billed usage of an assistant turn removed by `discardEntryDurably`. */
-const DISCARDED_TURN_USAGE_PURPOSE = "discarded-turn";
+
+/** Whether branch-marker `details` name a discarded entry, and which. */
+function discardedEntryMarkerId(details: unknown): string | undefined {
+	if (!isRecord(details) || details.kind !== DISCARDED_ENTRY_BRANCH_MARKER) return undefined;
+	return typeof details.discardedEntryId === "string" ? details.discardedEntryId : undefined;
+}
 /**
  * Read-back-and-retry passes one full rewrite makes after meeting another
  * writer's entries. Each pass re-reads the file, so only a writer that appends
@@ -4081,54 +4086,45 @@ export class SessionManager {
 	 *
 	 * The loader reconstructs the active branch from the last physical journal
 	 * entry, so changing the in-memory leaf alone is lost on reload. Known
-	 * metadata children are chained onto the discarded entry's parent before the
-	 * entry is removed. If any child may carry content, the subtree is preserved
-	 * off-branch instead. Both paths append a metadata-only branch marker and
-	 * rewrite the journal, making the selected path durable.
+	 * metadata children are chained onto the discarded entry's parent by
+	 * appending copies of them on the kept chain, so the persisted lines already
+	 * say what the branch is. A metadata-only branch marker closes the chain.
 	 *
-	 * A removed assistant turn was still billed, so its usage is re-journaled as
-	 * an off-branch `model_usage` entry; session totals and `omp stats` keep
-	 * counting it. A subtree preserved off-branch keeps its own usage.
+	 * The discarded entry itself stays in the journal, off the branch. If any
+	 * child may carry content, the subtree is preserved off-branch instead, and
+	 * the marker still selects the path.
+	 *
+	 * A kept assistant turn keeps its billed usage on its own line, which the
+	 * loader counts; re-journaling it as a `model_usage` entry would count the
+	 * turn twice.
 	 */
 	async discardEntryDurably(entryId: string): Promise<void> {
 		const entry = this.#index.get(entryId);
 		if (!entry) return;
+		// The callers move the leaf to the entry's parent before calling this (see
+		// `discardAssistantTurn`), which writes nothing, so the entry being off the
+		// branch says nothing about whether it was already discarded. The marker is
+		// the durable evidence: with one present, a second call would branch back
+		// past it and drop the turns after it.
+		if (
+			this.#entries.some(
+				candidate => candidate.type === "branch_summary" && discardedEntryMarkerId(candidate.details) === entryId,
+			)
+		)
+			return;
 		const children = this.#index.childrenOf(entryId);
 		const canReparentChildren = children.every(child => child.type === "service_tier_change");
 		let leafId = entry.parentId;
 		if (canReparentChildren) {
+			this.#setLeaf(leafId);
 			for (const child of children) {
-				child.parentId = leafId;
-				leafId = child.id;
-			}
-			this.#entries = this.#entries.filter(candidate => candidate.id !== entryId);
-			this.#index.rebuild(this.#entries);
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				const { api, provider, model, usage, stopReason, errorMessage } = entry.message;
-				// Off-branch like late usage: totals count every entry, and the kept
-				// chain stays made of entries collab guests replicate.
-				this.#recordEntry({
-					type: "model_usage",
-					id: generateId(this.#index),
-					parentId: leafId,
-					timestamp: entry.timestamp,
-					runtime: currentRuntimeIdentity(),
-					activeLeafId: leafId,
-					purpose: DISCARDED_TURN_USAGE_PURPOSE,
-					api,
-					provider,
-					model,
-					usage,
-					stopReason,
-					...(errorMessage === undefined ? {} : { errorMessage }),
-				});
+				leafId = this.appendServiceTierChange((child as ServiceTierChangeEntry).serviceTier);
 			}
 		}
 		this.branchWithSummary(leafId, "", {
 			kind: DISCARDED_ENTRY_BRANCH_MARKER,
 			discardedEntryId: entryId,
 		});
-		await this.rewriteEntries();
 	}
 
 	/** Like branch(), but also records a branch_summary of the abandoned path. */
