@@ -139,10 +139,14 @@ const JSONL_SUFFIX_LENGTH = ".jsonl".length;
 const DRAFT_ONLY_SESSION_MARKER = ".draft-only-session";
 const DISCARDED_ENTRY_BRANCH_MARKER = "discarded-entry-branch";
 
-/** Whether branch-marker `details` name a discarded entry, and which. */
-function discardedEntryMarkerId(details: unknown): string | undefined {
-	if (!isRecord(details) || details.kind !== DISCARDED_ENTRY_BRANCH_MARKER) return undefined;
-	return typeof details.discardedEntryId === "string" ? details.discardedEntryId : undefined;
+/** Whether `entry` is the branch marker `discardEntryDurably` wrote for `entryId`. */
+function isDiscardMarkerFor(entry: SessionEntry, entryId: string): boolean {
+	return (
+		entry.type === "branch_summary" &&
+		isRecord(entry.details) &&
+		entry.details.kind === DISCARDED_ENTRY_BRANCH_MARKER &&
+		entry.details.discardedEntryId === entryId
+	);
 }
 /**
  * Read-back-and-retry passes one full rewrite makes after meeting another
@@ -4089,12 +4093,7 @@ export class SessionManager {
 		// branch says nothing about whether it was already discarded. The marker is
 		// the durable evidence: with one present, a second call would branch back
 		// past it and drop the turns after it.
-		if (
-			this.#entries.some(
-				candidate => candidate.type === "branch_summary" && discardedEntryMarkerId(candidate.details) === entryId,
-			)
-		)
-			return;
+		if (this.#entries.some(candidate => isDiscardMarkerFor(candidate, entryId))) return;
 		const children = this.#index.childrenOf(entryId);
 		const canReparentChildren = children.every(child => child.type === "service_tier_change");
 		let leafId = entry.parentId;
