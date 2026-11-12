@@ -253,6 +253,7 @@ describe("discarding a failed turn on a long session", () => {
 		const failedId = appendFailedTurn();
 		const childId = manager.appendMessage({ role: "user", content: "Preserved off branch.", timestamp: Date.now() });
 		await manager.flush();
+		branchToParentOf(failedId);
 
 		resetCounts();
 		await manager.discardEntryDurably(failedId);
