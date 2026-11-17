@@ -119,7 +119,7 @@ describe("restoreSession (omp --restore)", () => {
 		const followUp = vi.spyOn(executorModule, "runSubagentFollowUpTurn").mockResolvedValue(result);
 		const restoreTurn = vi.fn(async () => true);
 		const session = {
-			sessionManager: { getSessionFile: () => mainFile },
+			sessionManager: { getSessionFile: () => mainFile, getEntries: () => main.getEntries() },
 			asyncJobManager: manager,
 			settings: Settings.isolated(),
 			restoreInterruptedTurn: restoreTurn,
@@ -139,5 +139,53 @@ describe("restoreSession (omp --restore)", () => {
 		await manager.getJob("Cut")!.promise;
 		await manager.drainDeliveries({ filter: { ownerId: MAIN_AGENT_ID } });
 		expect(delivered).toEqual(["Cut"]);
+	});
+
+	it("leaves a subagent whose run already delivered a terminal result alone", async () => {
+		tempDir = TempDir.createSync("@pi-restore-finished-");
+		const cwd = tempDir.path();
+		const main = SessionManager.create(cwd, path.join(cwd, "sessions"));
+		main.appendMessage({ role: "user", content: "fan out", timestamp: Date.now() });
+		const mainFile = main.getSessionFile();
+		if (!mainFile) throw new Error("Expected a persisted session file");
+		// Both children stop mid-turn, as a parked subagent's transcript does: its
+		// process was disposed without appending the final message.
+		await writeSubagent(mainFile, cwd, "Finished", cutOff, "scout");
+		await writeSubagent(mainFile, cwd, "Cut", cutOff, "scout");
+		// The parent's own journal records that Finished's run ended.
+		main.appendCustomMessageEntry("async-result", "Background job Finished has completed.", true, {
+			jobs: [{ jobId: "Finished", type: "task", status: "completed", agentId: "Finished" }],
+		});
+		await main.close();
+
+		manager = new AsyncJobManager({});
+		const result: SingleResult = {
+			index: 0,
+			id: "Cut",
+			agent: "Cut",
+			agentSource: "user",
+			task: "Cut task",
+			exitCode: 0,
+			output: "finished after the restart",
+			stderr: "",
+			truncated: false,
+			durationMs: 5,
+			tokens: 0,
+			requests: 1,
+		};
+		const followUp = vi.spyOn(executorModule, "runSubagentFollowUpTurn").mockResolvedValue(result);
+		const session = {
+			sessionManager: { getSessionFile: () => mainFile, getEntries: () => main.getEntries() },
+			asyncJobManager: manager,
+			settings: Settings.isolated(),
+			restoreInterruptedTurn: vi.fn(async () => true),
+		} as unknown as AgentSession;
+
+		const outcome = await restoreSession(session);
+
+		expect(outcome.subagents).toEqual(["Cut"]);
+		expect(followUp).toHaveBeenCalledTimes(1);
+		expect(followUp.mock.calls[0]![0]).toMatchObject({ id: "Cut" });
+		await manager.getJob("Cut")!.promise;
 	});
 });

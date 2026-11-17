@@ -1488,6 +1488,7 @@ export class CommandController {
 		const previousSessionId = this.ctx.sessionManager.isSessionOnDisk()
 			? this.ctx.sessionManager.getSessionId()
 			: undefined;
+		const previousSessionFile = previousSessionId ? this.ctx.sessionManager.getSessionFile() : undefined;
 
 		const success = await this.ctx.session.fork();
 		if (!success) {
@@ -1500,7 +1501,7 @@ export class CommandController {
 		this.ctx.present(() =>
 			successLineView(
 				previousSessionId
-					? `Session forked · return to original: ${resumeCommand(previousSessionId)} or /resume ${previousSessionId}`
+					? `Session forked · return to original: ${resumeCommand(previousSessionId, previousSessionFile)} or /resume ${previousSessionId}`
 					: `Session forked`,
 			),
 		);

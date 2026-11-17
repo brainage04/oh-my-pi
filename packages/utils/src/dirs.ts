@@ -649,6 +649,45 @@ export function getActiveProfile(): string | undefined {
 export function getProfileRootDir(profile: string | undefined): string {
 	return getProfileConfigRoot(normalizeProfileName(profile));
 }
+
+/**
+ * The named profile whose config root contains `sessionPath`, if any.
+ *
+ * A named profile keeps its state under `<profiles parent>/<name>` (see
+ * {@link getProfileRootDir} and the XDG rule in {@link DirResolver}), so a
+ * `--restore`/`--resume` of a session file names the profile that can load it.
+ * Returns undefined for the default profile's sessions and for any path outside
+ * every profile root.
+ */
+export function profileFromSessionPath(sessionPath: string): string | undefined {
+	for (const parent of profileParents()) {
+		const relative = relativePathWithinRoot(parent, sessionPath);
+		const name = relative?.split(path.sep)[0];
+		if (!name) continue;
+		try {
+			const profile = normalizeProfileName(name);
+			if (profile) return profile;
+		} catch {
+			// A directory name that is not a legal profile name is not a profile root.
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Directories whose children are profile config roots: the config root's
+ * `profiles/` and, on Linux and macOS, the same directory under an XDG data home
+ * that `DirResolver` accepts for a named profile.
+ */
+function profileParents(): string[] {
+	const parents = [path.join(getBaseConfigRoot(), "profiles")];
+	if (process.platform === "linux" || process.platform === "darwin") {
+		const xdg = process.env.XDG_DATA_HOME;
+		if (xdg) parents.push(path.join(xdg, APP_NAME, "profiles"));
+	}
+	return parents;
+}
+
 /** Get the agent config directory (~/.omp/agent). */
 export function getAgentDir(): string {
 	return dirs.agentDir;
