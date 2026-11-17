@@ -75,6 +75,8 @@
 - Fixed MCP OAuth reauthentication errors to expose registration endpoints, status details, and remedies, and fixed auth-broker shutdown so refreshed tokens are saved safely.
 - Fixed Spotlight retry and account handling, including waitlisted accounts, rate limits, outages, and request identification.
 - Fixed cross-platform shell and desktop behavior, including macOS startup and redraw performance, Windows file operations and application lookup, speech output, and desktop opening.
+- `omp --restore` and `omp --resume` of a session file stored under a named profile's root now activate that profile instead of the default one, and refuse a `--profile` that names a different profile instead of opening the file with the wrong credentials. The exit and `[Recovery]` hints name the session's profile.
+- `omp --restore` no longer relaunches a subagent whose run already delivered a terminal result to its parent: only subagents whose turn the stopping process cut off go on.
 
 ## [18.22.2] - 2026-11-18
 
