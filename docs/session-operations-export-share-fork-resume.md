@@ -512,6 +512,13 @@ given, and fails with a clear error when `--profile` names a different profile.
 Without it the launch reads the default profile's credentials, so a model only the
 profile's auth serves fails to restore.
 
+The precedence over the environment differs from `--profile`'s on purpose. An
+explicit `--profile` outranks `OMP_PROFILE`/`PI_PROFILE`, and a conflicting one is
+refused. With no flag, the session's own profile outranks an environment profile,
+because only those credentials can load the file, and the launch writes one line to
+stderr naming the profile it ignored. A session id (`--resume <id>`) names no path,
+so it never selects a profile this way.
+
 ## CLI `--continue`
 
 `SessionManager.continueRecent(cwd, sessionDir)`:

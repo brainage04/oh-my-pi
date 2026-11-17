@@ -459,17 +459,25 @@ export async function runCli(argv: string[]): Promise<void> {
 		// load it: without it the launch reads the default profile's auth and a
 		// saved model the profile's credentials serve fails to restore.
 		const choice = chooseSessionProfile(extracted.profile, extracted.sessionSource);
+		// Module-load resolution deliberately swallows an invalid env value to avoid
+		// an uncaught throw before this try/catch is in scope (see
+		// `readProfileFromEnvSafe` in dirs.ts), and callers may set OMP_PROFILE after
+		// importing this module (profile aliases/tests). Resolving here turns
+		// `OMP_PROFILE=.. omp --version` into a clean error.
+		const envProfile = resolveProfileEnv(process.env.OMP_PROFILE, process.env.PI_PROFILE);
 		if (choice.kind === "none") {
-			// No explicit --profile: activate any OMP_PROFILE/PI_PROFILE inherited
-			// from the environment. Module-load resolution deliberately swallows an
-			// invalid value to avoid an uncaught throw before this try/catch is in
-			// scope (see `readProfileFromEnvSafe` in dirs.ts), and callers may set
-			// OMP_PROFILE after importing this module (profile aliases/tests). Surfacing
-			// validation here turns `OMP_PROFILE=.. omp --version` into a clean error;
-			// calling setProfile keeps every later path helper on the env-selected
-			// profile instead of the default agent directory.
-			setProfile(resolveProfileEnv(process.env.OMP_PROFILE, process.env.PI_PROFILE));
+			// No flag and no session profile: keep every later path helper on the
+			// env-selected profile instead of the default agent directory.
+			setProfile(envProfile);
 		} else {
+			// The session's own profile outranks an environment one: its credentials are
+			// the only ones that can load the file. A user who set the env var on
+			// purpose needs to hear that it lost, or the launch looks like it ignored it.
+			if (choice.kind === "session" && envProfile !== undefined && envProfile !== choice.profile) {
+				process.stderr.write(
+					`omp: the session belongs to profile "${choice.profile}"; ignoring ${process.env.OMP_PROFILE !== undefined ? "OMP_PROFILE" : "PI_PROFILE"}=${envProfile}\n`,
+				);
+			}
 			setProfile(choice.profile);
 		}
 		if (extracted.aliasName !== undefined) {
