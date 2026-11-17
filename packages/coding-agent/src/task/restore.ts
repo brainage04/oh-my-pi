@@ -57,8 +57,13 @@ export async function restoreSession(session: AgentSession, options: RestoreOpti
 	return { turn, subagents };
 }
 
-/** Terminal job statuses: the run ended, so its turn is not interrupted. */
-const TERMINAL_JOB_STATUSES: Readonly<Record<string, true>> = { completed: true, failed: true, cancelled: true };
+/**
+ * Statuses a delivered `async-result` can carry when the run ended. `cancelled`
+ * is absent because a cancelled job never delivers one
+ * (`job-manager.ts:573-590` sets its result text and returns, and the catch arm
+ * enqueues only when the status is not `cancelled`), so no journal holds it.
+ */
+const TERMINAL_JOB_STATUSES: Readonly<Record<string, true>> = { completed: true, failed: true };
 
 function jobStatusOf(job: unknown): { agentId?: string; terminal: boolean } | undefined {
 	if (typeof job !== "object" || job === null) return undefined;
@@ -71,13 +76,17 @@ function jobStatusOf(job: unknown): { agentId?: string; terminal: boolean } | un
 
 /**
  * When each subagent's run last ended, from the parent journal's `async-result`
- * deliveries: a job's terminal status (`completed`, `failed`, `cancelled`) is the
- * parent's own record that the run finished, delivered after the child's last
- * transcript write. A child that finished leaves a mid-turn tail when its process
- * was parked instead of disposed (nothing appends its final message), so
- * {@link hasRestorableTurn} alone reads it as interrupted; this is the signal that
- * says the run was over. A child that woke again afterward has a newer transcript
- * entry, and {@link restoreSubagents} keeps restoring it.
+ * deliveries: a delivered `completed` or `failed` result is the parent's own
+ * record that the run ended, written after the child's last transcript entry. A
+ * child that finished leaves a mid-turn tail when its process was parked instead
+ * of disposed (nothing appends its final message), so {@link hasRestorableTurn}
+ * alone reads it as interrupted; this is the signal that says the run was over. A
+ * child that woke again afterward has a newer transcript entry, and
+ * {@link restoreSubagents} keeps restoring it.
+ *
+ * A journal written before deliveries carried `status` and `agentId` cannot prove
+ * a run ended, so such an entry is not a cutoff: a finished child from that era
+ * still restores, the way it did before this check existed.
  */
 function completedRunCutoffs(entries: readonly SessionEntry[]): Map<string, number> {
 	const cutoffs = new Map<string, number>();
