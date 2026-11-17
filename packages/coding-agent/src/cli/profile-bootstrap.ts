@@ -57,6 +57,11 @@ export interface ProfileBootstrapResult {
 	argv: string[];
 	profile?: string;
 	aliasName?: string;
+	/**
+	 * The session source the launch opens (`--resume <id|path>`, `--restore`,
+	 * `--session <id|path>`), which decides the profile when `--profile` is absent.
+	 */
+	sessionSource?: string;
 }
 
 /**
@@ -78,6 +83,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 	const stripped: string[] = [];
 	let profile: string | undefined;
 	let aliasName: string | undefined;
+	let sessionSource: string | undefined;
 	let passThrough = false;
 	let sawSubcommand = false;
 	let canDispatchSubcommand = true;
@@ -182,6 +188,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 			const next = argv[index + 1];
 			if (next !== undefined && !next.startsWith("-") && !(config.rejectEmpty === true && next.length === 0)) {
 				stripped.push(next);
+				sessionSource = next;
 				index += 1;
 			}
 			continue;
@@ -225,5 +232,5 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 		stripped.push(arg);
 	}
 
-	return { argv: stripped, profile, aliasName };
+	return { argv: stripped, profile, aliasName, sessionSource };
 }

@@ -2991,7 +2991,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			if (!sessionId || !this.sessionManager.isSessionConfirmedOnDisk()) return undefined;
 			return {
 				label: this.#agentId ?? (this.#agentKind === "main" ? "Main" : "Agent"),
-				command: resumeCommand(sessionId),
+				command: resumeCommand(sessionId, this.sessionManager.getSessionFile()),
 			};
 		});
 
