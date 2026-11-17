@@ -189,3 +189,66 @@ describe("restoreSession (omp --restore)", () => {
 		await manager.getJob("Cut")!.promise;
 	});
 });
+describe("restoreSession with an older journal", () => {
+	const ids = ["OldJob", "OldJobIdOnly"];
+	let tempDir: TempDir | undefined;
+	let manager: AsyncJobManager | undefined;
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		for (const id of ids) AgentRegistry.global().unregister(id);
+		await manager?.dispose({ timeoutMs: 1000 });
+		manager = undefined;
+		tempDir?.removeSync();
+		tempDir = undefined;
+	});
+
+	/**
+	 * The pre-status delivery shape: older journals carry `agentId`/`status` as null
+	 * or omit them, so they cannot prove a run ended and must not become a cutoff.
+	 */
+	it.each([
+		["agentId and status null", { jobId: "OldJob", agentId: null, status: null }],
+		["agentId absent, status absent", { jobId: "OldJobIdOnly" }],
+	])("still restores a finished child when the delivery has %s", async (_label, job) => {
+		tempDir = TempDir.createSync("@pi-restore-legacy-");
+		const cwd = tempDir.path();
+		const main = SessionManager.create(cwd, path.join(cwd, "sessions"));
+		main.appendMessage({ role: "user", content: "fan out", timestamp: Date.now() });
+		const mainFile = main.getSessionFile();
+		if (!mainFile) throw new Error("Expected a persisted session file");
+		const id = String((job as { jobId: string }).jobId);
+		await writeSubagent(mainFile, cwd, id, cutOff, "scout");
+		main.appendCustomMessageEntry("async-result", "Background job has completed.", true, { jobs: [job] });
+		await main.close();
+
+		manager = new AsyncJobManager({});
+		const result: SingleResult = {
+			index: 0,
+			id,
+			agent: id,
+			agentSource: "user",
+			task: `${id} task`,
+			exitCode: 0,
+			output: "restored",
+			stderr: "",
+			truncated: false,
+			durationMs: 5,
+			tokens: 0,
+			requests: 1,
+		};
+		const followUp = vi.spyOn(executorModule, "runSubagentFollowUpTurn").mockResolvedValue(result);
+		const session = {
+			sessionManager: { getSessionFile: () => mainFile, getEntries: () => main.getEntries() },
+			asyncJobManager: manager,
+			settings: Settings.isolated(),
+			restoreInterruptedTurn: vi.fn(async () => true),
+		} as unknown as AgentSession;
+
+		const outcome = await restoreSession(session);
+
+		expect(outcome.subagents).toEqual([id]);
+		expect(followUp).toHaveBeenCalledTimes(1);
+		await manager.getJob(id)!.promise;
+	});
+});
