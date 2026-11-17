@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `omp --restore` and `omp --resume` of a session file stored under a named profile's root now activate that profile instead of the default one, and refuse a `--profile` that names a different profile instead of opening the file with the wrong credentials. The exit and `[Recovery]` hints name the session's profile.
+- `omp --restore` no longer relaunches a subagent whose run already delivered a terminal result to its parent: only subagents whose turn the stopping process cut off go on.
+
 ## [18.22.0] - 2026-11-16
 
 ### Breaking Changes
