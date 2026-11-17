@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
      inputs:
         tag:
-           description: "Tag to build and release, e.g. v18.22.0-bp.1 (created from this ref if missing)"
+           description: "Tag to build and release, e.g. v18.22.0-bp.1. Created at the dispatched ref if it does not exist yet."
            required: true
            type: string
   push:
