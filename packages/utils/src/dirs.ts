@@ -660,8 +660,13 @@ export function getProfileRootDir(profile: string | undefined): string {
  * every profile root.
  */
 export function profileFromSessionPath(sessionPath: string): string | undefined {
+	// The file may not exist yet (a resume hint can name a path the process is about
+	// to write), so resolve through the deepest existing ancestor: a symlinked
+	// profile directory still classifies as that profile.
+	const resolved = resolveEquivalentPath(sessionPath, { throughMissing: true });
 	for (const parent of profileParents()) {
-		const relative = relativePathWithinRoot(parent, sessionPath);
+		const normalizedParent = normalizePathForComparison(parent);
+		const relative = relativePathWithinNormalizedRoot(normalizedParent, resolved);
 		const name = relative?.split(path.sep)[0];
 		if (!name) continue;
 		try {
