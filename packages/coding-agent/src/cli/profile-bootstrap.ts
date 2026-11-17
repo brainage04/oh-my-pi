@@ -53,6 +53,19 @@ function needsBoundaryAfterGlobalStrip(stripped: readonly string[]): boolean {
 	);
 }
 
+/**
+ * Value of an optional-value flag written inline (`--resume=<value>`), or
+ * undefined when `arg` is not one. The empty value is treated as no value, the
+ * same as {@link OptionalFlagConfig.rejectEmpty} treats the spaced form.
+ */
+function inlineOptionalValue(arg: string): string | undefined {
+	const equals = arg.indexOf("=");
+	if (!arg.startsWith("--") || equals === -1) return undefined;
+	if (!OPTIONAL_VALUE_FLAGS.has(arg.slice(0, equals))) return undefined;
+	const value = arg.slice(equals + 1);
+	return value.length > 0 ? value : undefined;
+}
+
 export interface ProfileBootstrapResult {
 	argv: string[];
 	profile?: string;
@@ -178,6 +191,19 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 				stripped.push(argv[index + 1]);
 				index += 1;
 			}
+			continue;
+		}
+
+		// `--resume=<id|path>` (and the `--restore=`/`--session=` spellings) carries
+		// its value inline, which `parseArgs` splices out before its own
+		// OPTIONAL_VALUE_FLAGS arm (`args.ts:284-291`). The bootstrap sees the raw
+		// token, so it must take the value from the `=` form too or a restore of a
+		// profile session would activate no profile.
+		const inlineOptional = inlineOptionalValue(arg);
+		if (inlineOptional !== undefined) {
+			canDispatchSubcommand = false;
+			stripped.push(arg);
+			sessionSource = inlineOptional;
 			continue;
 		}
 
