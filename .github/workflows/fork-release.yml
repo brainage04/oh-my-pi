@@ -1,0 +1,184 @@
+name: Fork release
+
+# Builds and publishes the fork's own `omp-linux-x64` release asset, so the
+# hosts install a prebuilt binary instead of compiling omp from source.
+#
+# The build is upstream's own release path, reused rather than reimplemented:
+# `bun run ci:release:build-binaries` with RELEASE_TARGETS=linux-x64, the same
+# script, target id and output path (.github/workflows/ci.yml `release_binary`)
+# that produce upstream's `omp-linux-x64`. Only that one target is built here,
+# because the fork exists to carry two TypeScript patches for Thomas's hosts.
+#
+# Tag format: `v<upstream version>-bp.<n>`, e.g. `v18.22.0-bp.1`.
+
+on:
+  workflow_dispatch:
+     inputs:
+        tag:
+           description: "Tag to build and release, e.g. v18.22.0-bp.1 (created from this ref if missing)"
+           required: true
+           type: string
+  push:
+     tags:
+        - "v*-bp.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.4.4
+  TARGET_ID: linux-x64
+  BINARY_PATH: packages/coding-agent/binaries/omp-linux-x64
+
+jobs:
+  build:
+     name: Build and smoke omp-linux-x64
+     runs-on: ubuntu-22.04
+     timeout-minutes: 90
+     outputs:
+        tag: ${{ steps.tag.outputs.tag }}
+     steps:
+        - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+          with:
+             fetch-depth: 0
+
+        - name: Resolve release tag
+          id: tag
+          shell: bash
+          env:
+             INPUT_TAG: ${{ inputs.tag }}
+          run: |
+             set -euo pipefail
+             if [ -n "${INPUT_TAG}" ]; then
+               tag="$INPUT_TAG"
+             else
+               tag="${GITHUB_REF_NAME}"
+             fi
+             if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-bp\.([0-9]+)$ ]]; then
+               echo "::error::tag '$tag' is not v<version>-bp.<n>"
+               exit 1
+             fi
+             version="${BASH_REMATCH[1]}"
+             declared="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' packages/coding-agent/package.json | head -n1)"
+             if [ "$declared" != "$version" ]; then
+               echo "::error::tag says $version but packages/coding-agent/package.json says $declared"
+               exit 1
+             fi
+             echo "tag=$tag" >> "$GITHUB_OUTPUT"
+             echo "version=$version" >> "$GITHUB_OUTPUT"
+             echo "building $tag (omp $version)"
+
+        - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+          with:
+             bun-version: ${{ env.BUN_VERSION }}
+
+        - name: Restore bun store
+          uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+          with:
+             path: ~/.bun/install/cache
+             key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+             restore-keys: |
+                bun-${{ runner.os }}-
+
+        - run: bun install --frozen-lockfile
+
+        # The linux-x64 addon pair, installed through the same driver the PR path
+        # and the release path use. Upstream's release job takes the pair from its
+        # own Bazel build; the fork's patches are TypeScript only, so the published
+        # @oh-my-pi/pi-natives-linux-x64 package at exactly this version carries the
+        # same addon bytes a Bazel build of this commit would produce, and the
+        # driver stamps them for embedding.
+        - name: Install linux-x64 native addons
+          shell: bash
+          env:
+             VERSION: ${{ steps.tag.outputs.version }}
+          run: |
+             set -euo pipefail
+             url="https://registry.npmjs.org/@oh-my-pi/pi-natives-linux-x64/${VERSION}"
+             tarball="$(curl -fsSL --retry 5 --retry-max-time 60 "$url" | bun -e 'const d = await new Response(Bun.stdin.stream()).json(); console.log(d.dist.tarball)')"
+             echo "Fetching $tarball"
+             curl -fsSL --retry 5 --retry-max-time 120 "$tarball" | tar -xz -C "$RUNNER_TEMP"
+             mkdir -p ci-natives/natives-linux-x64-baseline ci-natives/natives-linux-x64-modern
+             cp "$RUNNER_TEMP/package/pi_natives.linux-x64-baseline.node" ci-natives/natives-linux-x64-baseline/
+             cp "$RUNNER_TEMP/package/pi_natives.linux-x64-modern.node" ci-natives/natives-linux-x64-modern/
+             bun scripts/bazel-natives.ts linux-x64-baseline linux-x64-modern \
+               --source ci-natives --dest packages/natives/native
+
+        - name: Build release binary
+          env:
+             RELEASE_TARGETS: ${{ env.TARGET_ID }}
+          run: bun run ci:release:build-binaries
+
+        # The same checks upstream's release_smoke job runs on this target.
+        - name: Smoke release binary
+          shell: bash
+          env:
+             BINARY: ${{ env.BINARY_PATH }}
+          run: |
+             set -euo pipefail
+             chmod +x "$BINARY"
+             runtime_dir="$(mktemp -d)"
+             version="$(HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "$BINARY" --version)"
+             echo "binary reports: $version"
+             # The binary is minted from this tree's package.json, so a version
+             # mismatch means the build did not pick up the tag's commit.
+             case "$version" in
+               *"${{ steps.tag.outputs.version }}"*) ;;
+               *) echo "::error::expected omp ${{ steps.tag.outputs.version }}, binary printed: $version"; exit 1 ;;
+             esac
+             HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "$BINARY" --smoke-test
+
+        - name: Upload release binary
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          with:
+             name: omp-binary-${{ env.TARGET_ID }}
+             path: ${{ env.BINARY_PATH }}
+             if-no-files-found: error
+
+  publish:
+     name: Publish GitHub release
+     needs: [build]
+     runs-on: ubuntu-22.04
+     permissions:
+        contents: write
+     steps:
+        - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+        - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+          with:
+             bun-version: ${{ env.BUN_VERSION }}
+
+        - name: Download release binary
+          uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+          with:
+             name: omp-binary-${{ env.TARGET_ID }}
+             path: packages/coding-agent/binaries
+
+        # Dependency-free build (bun APIs + zip only), so no `bun install` here.
+        - name: Build browser relay extension
+          run: bun run --cwd packages/browser-relay build
+
+        # After every other asset is in place and before the release is created,
+        # so SHA256SUMS itself ships and covers every file uploaded with it.
+        - name: Generate checksums
+          run: |
+             bun run ci:release:checksums SHA256SUMS \
+               packages/coding-agent/binaries/omp-* \
+               packages/browser-relay/dist/omp-browser-relay-extension.zip \
+               LICENSE
+
+        - name: Create GitHub Release
+          uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+          with:
+             tag_name: ${{ needs.build.outputs.tag }}
+             name: ${{ needs.build.outputs.tag }}
+             files: |
+                packages/coding-agent/binaries/omp-*
+                packages/browser-relay/dist/omp-browser-relay-extension.zip
+                LICENSE
+                SHA256SUMS
+             generate_release_notes: true
