@@ -108,3 +108,76 @@ describe("--restore of a profile session", () => {
 		);
 	});
 });
+
+describe("--restore=<path> inline spelling", () => {
+	let configDir = "";
+	let originalConfigDir: string | undefined;
+
+	beforeEach(() => {
+		originalConfigDir = process.env.PI_CONFIG_DIR;
+		configDir = `.omp-restore-inline-test-${process.pid}-${Date.now()}`;
+		process.env.PI_CONFIG_DIR = configDir;
+		process.exitCode = 0;
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		setProfile(undefined);
+		if (originalConfigDir === undefined) delete process.env.PI_CONFIG_DIR;
+		else process.env.PI_CONFIG_DIR = originalConfigDir;
+		__resetProfileSnapshotForTests();
+		process.exitCode = 0;
+		await removeWithRetries(path.join(os.homedir(), configDir));
+	});
+
+	it("activates the profile that owns the inline --restore=<path> session", async () => {
+		vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		setProfile(undefined);
+		delete process.env.OMP_PROFILE;
+		delete process.env.PI_PROFILE;
+		const sessionFile = path.join(
+			os.homedir(),
+			configDir,
+			"profiles",
+			"work",
+			"agent",
+			"sessions",
+			"-tmp",
+			"s.jsonl",
+		);
+		await fs.mkdir(path.dirname(sessionFile), { recursive: true });
+		await fs.writeFile(sessionFile, "");
+
+		await runCli(["--version", `--restore=${sessionFile}`]);
+
+		expect(process.exitCode).toBe(0);
+		expect(getActiveProfile()).toBe("work");
+	});
+
+	it("refuses an inline --restore=<path> under a different --profile", async () => {
+		const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		setProfile(undefined);
+		delete process.env.OMP_PROFILE;
+		delete process.env.PI_PROFILE;
+		const sessionFile = path.join(
+			os.homedir(),
+			configDir,
+			"profiles",
+			"work",
+			"agent",
+			"sessions",
+			"-tmp",
+			"s.jsonl",
+		);
+		await fs.mkdir(path.dirname(sessionFile), { recursive: true });
+		await fs.writeFile(sessionFile, "");
+
+		await runCli(["--version", "--profile", "personal", `--resume=${sessionFile}`]);
+
+		expect(process.exitCode).toBe(1);
+		expect(errSpy.mock.calls.map(call => String(call[0] ?? "")).join("\n")).toContain(
+			`does not match the session's profile "work"`,
+		);
+	});
+});
