@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getProfileRootDir, profileFromSessionPath } from "@oh-my-pi/pi-utils/dirs";
@@ -16,6 +17,37 @@ describe("profileFromSessionPath", () => {
 
 	it("returns undefined for a path outside every profile root", () => {
 		expect(profileFromSessionPath("/tmp/s.jsonl")).toBeUndefined();
+	});
+
+	it("accepts a relative path", () => {
+		const file = path.join(getProfileRootDir("work"), "agent", "sessions", "-tmp", "s.jsonl");
+		expect(profileFromSessionPath(path.relative(process.cwd(), file))).toBe("work");
+	});
+
+	it("resolves a session file behind a symlinked directory, even before it exists", async () => {
+		const sessions = path.join(getProfileRootDir("work"), "agent", "sessions");
+		await fs.mkdir(sessions, { recursive: true });
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-session-profile-link-"));
+		const link = path.join(root, "via-link");
+		await fs.symlink(sessions, link);
+		try {
+			expect(profileFromSessionPath(path.join(link, "not-written-yet.jsonl"))).toBe("work");
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not claim a symlink that leaves the profile root", async () => {
+		const outside = await fs.mkdtemp(path.join(os.tmpdir(), "omp-session-profile-outside-"));
+		const link = path.join(getProfileRootDir("work"), "zz-escape");
+		await fs.mkdir(getProfileRootDir("work"), { recursive: true });
+		await fs.symlink(outside, link);
+		try {
+			expect(profileFromSessionPath(path.join(link, "s.jsonl"))).toBeUndefined();
+		} finally {
+			await fs.rm(link, { force: true });
+			await fs.rm(outside, { recursive: true, force: true });
+		}
 	});
 });
 
