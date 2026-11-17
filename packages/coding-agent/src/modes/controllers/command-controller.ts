@@ -1461,6 +1461,7 @@ export class CommandController {
 		const previousSessionId = this.ctx.sessionManager.isSessionOnDisk()
 			? this.ctx.sessionManager.getSessionId()
 			: undefined;
+		const previousSessionFile = previousSessionId ? this.ctx.sessionManager.getSessionFile() : undefined;
 
 		const success = await this.ctx.session.fork();
 		if (!success) {
@@ -1477,7 +1478,7 @@ export class CommandController {
 				theme.fg(
 					"accent",
 					previousSessionId
-						? `${theme.status.success} Session forked · return to original: ${resumeCommand(previousSessionId)} or /resume ${previousSessionId}`
+						? `${theme.status.success} Session forked · return to original: ${resumeCommand(previousSessionId, previousSessionFile)} or /resume ${previousSessionId}`
 						: `${theme.status.success} Session forked`,
 				),
 				1,
