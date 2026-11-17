@@ -479,12 +479,18 @@ a revived agent's turn the lifecycle teardown disposes.
 
 1. **Subagents first.** Every persisted subagent transcript under the session
    (`<session>/<AgentId>.jsonl`, nested ones included) that its process left
-   mid-turn, that was not killed (no tombstone) and that a cold revive can rebuild
-   (a `session_init` contract, not isolated) runs one more monitored turn as a
+   mid-turn, that was not killed (no tombstone), whose run did not already deliver
+   a terminal result to its parent, and that a cold revive can rebuild (a
+   `session_init` contract, not isolated) runs one more monitored turn as a
    background job of its parent, under the subagent's id. The lifecycle reviver
    rebuilds it from its transcript, the turn goes on as below, and the parent
    receives the result as the job's ordinary `async-result`, so a parent waiting on
-   that job finds it again.
+   that job finds it again. A kept-alive subagent is disposed with its final turn
+   unappended, so its own transcript still ends mid-turn; the parent's
+   `async-result` delivery carries the job's terminal status (`completed`, `failed`,
+   `cancelled`), and a child that wrote nothing after that delivery is not
+   relaunched. A child that woke again afterwards has a newer transcript entry and
+   is restored.
 2. **Then the session's own turn** (`AgentSession.restoreInterruptedTurn`). A turn
    cut off without a `session_exit` record (a crash, SIGKILL or power loss records
    none) is first closed the way exit recovery closes one whose exit was recorded:
@@ -499,6 +505,19 @@ interrupted). `--restore` is interactive only, takes no prompt, and cannot be
 combined with `--continue`, `--fork`, imports, `--goal` or `--no-session`.
 `/restart` drops a launch `--restore` like the other one-shot selectors and adds
 its own for the current session.
+
+A `--restore` or `--resume` of a session file stored under a named profile's root
+(`<omp home>/profiles/<name>/`) activates profile `<name>` when no `--profile` was
+given, and fails with a clear error when `--profile` names a different profile.
+Without it the launch reads the default profile's credentials, so a model only the
+profile's auth serves fails to restore.
+
+The precedence over the environment differs from `--profile`'s on purpose. An
+explicit `--profile` outranks `OMP_PROFILE`/`PI_PROFILE`, and a conflicting one is
+refused. With no flag, the session's own profile outranks an environment profile,
+because only those credentials can load the file, and the launch writes one line to
+stderr naming the profile it ignored. A session id (`--resume <id>`) names no path,
+so it never selects a profile this way.
 
 ## CLI `--continue`
 

@@ -53,10 +53,28 @@ function needsBoundaryAfterGlobalStrip(stripped: readonly string[]): boolean {
 	);
 }
 
+/**
+ * Value of an optional-value flag written inline (`--resume=<value>`), or
+ * undefined when `arg` is not one. The empty value is treated as no value, the
+ * same as {@link OptionalFlagConfig.rejectEmpty} treats the spaced form.
+ */
+function inlineOptionalValue(arg: string): string | undefined {
+	const equals = arg.indexOf("=");
+	if (!arg.startsWith("--") || equals === -1) return undefined;
+	if (!OPTIONAL_VALUE_FLAGS.has(arg.slice(0, equals))) return undefined;
+	const value = arg.slice(equals + 1);
+	return value.length > 0 ? value : undefined;
+}
+
 export interface ProfileBootstrapResult {
 	argv: string[];
 	profile?: string;
 	aliasName?: string;
+	/**
+	 * The session source the launch opens (`--resume <id|path>`, `--restore`,
+	 * `--session <id|path>`), which decides the profile when `--profile` is absent.
+	 */
+	sessionSource?: string;
 }
 
 /**
@@ -78,6 +96,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 	const stripped: string[] = [];
 	let profile: string | undefined;
 	let aliasName: string | undefined;
+	let sessionSource: string | undefined;
 	let passThrough = false;
 	let sawSubcommand = false;
 	let canDispatchSubcommand = true;
@@ -175,6 +194,19 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 			continue;
 		}
 
+		// `--resume=<id|path>` (and the `--restore=`/`--session=` spellings) carries
+		// its value inline, which `parseArgs` splices out before its own
+		// OPTIONAL_VALUE_FLAGS arm (`args.ts:284-291`). The bootstrap sees the raw
+		// token, so it must take the value from the `=` form too or a restore of a
+		// profile session would activate no profile.
+		const inlineOptional = inlineOptionalValue(arg);
+		if (inlineOptional !== undefined) {
+			canDispatchSubcommand = false;
+			stripped.push(arg);
+			sessionSource = inlineOptional;
+			continue;
+		}
+
 		if (OPTIONAL_VALUE_FLAGS.has(arg)) {
 			canDispatchSubcommand = false;
 			stripped.push(arg);
@@ -182,6 +214,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 			const next = argv[index + 1];
 			if (next !== undefined && !next.startsWith("-") && !(config.rejectEmpty === true && next.length === 0)) {
 				stripped.push(next);
+				sessionSource = next;
 				index += 1;
 			}
 			continue;
@@ -225,5 +258,5 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 		stripped.push(arg);
 	}
 
-	return { argv: stripped, profile, aliasName };
+	return { argv: stripped, profile, aliasName, sessionSource };
 }
