@@ -2,8 +2,10 @@
  * Classification of the model calls stored in `messages`, for attributing usage.
  *
  * - A **turn** is an assistant message (stored with a NULL purpose), or the
- *   billed usage of a discarded assistant turn, which the session journals as
- *   a `model_usage` entry with purpose `discarded-turn`.
+ *   billed usage of a discarded assistant turn. Journals written before the
+ *   discard kept the turn in place carry that usage as a `model_usage` entry
+ *   with purpose `discarded-turn`; newer ones keep the assistant entry itself,
+ *   off the branch, and write no such row.
  * - A **side channel** is every other `model_usage` entry: a model call that
  *   is not part of the conversation (title generation, job captions, judge
  *   queries, …). Its category groups the purposes of one use case.
@@ -18,7 +20,10 @@
 
 import { isJudgmentApi } from "@oh-my-pi/pi-ai";
 
-/** Purpose of the `model_usage` entry carrying the billed usage of a discarded assistant turn. */
+/**
+ * Purpose of the `model_usage` entry that older journals carry for a discarded
+ * assistant turn. Kept so those rows still classify as a turn, not a side channel.
+ */
 const DISCARDED_TURN_PURPOSE = "discarded-turn";
 
 /** Side-channel categories and the purposes each covers. A purpose listed nowhere is its own category. */
