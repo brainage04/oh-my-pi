@@ -67,7 +67,10 @@ const TERMINAL_JOB_STATUSES: Readonly<Record<string, true>> = { completed: true,
 
 function jobStatusOf(job: unknown): { agentId?: string; terminal: boolean } | undefined {
 	if (typeof job !== "object" || job === null) return undefined;
-	const record = job as { agentId?: unknown; jobId?: unknown; status?: unknown };
+	const record = job as { agentId?: unknown; jobId?: unknown; status?: unknown; type?: unknown };
+	// Only a task job's id names a subagent transcript. A background bash job's id
+	// is minted by the same manager, so a collision would otherwise read as a cutoff.
+	if (record.type !== "task") return undefined;
 	const agentId =
 		typeof record.agentId === "string" ? record.agentId : typeof record.jobId === "string" ? record.jobId : undefined;
 	if (agentId === undefined) return undefined;
