@@ -60,7 +60,7 @@ export async function restoreSession(session: AgentSession, options: RestoreOpti
 /**
  * Statuses a delivered `async-result` can carry when the run ended. `cancelled`
  * is absent because a cancelled job never delivers one
- * (`job-manager.ts:573-590` sets its result text and returns, and the catch arm
+ * (`job-manager.ts:629-646` sets its result text and returns, and the catch arm
  * enqueues only when the status is not `cancelled`), so no journal holds it.
  */
 const TERMINAL_JOB_STATUSES: Readonly<Record<string, true>> = { completed: true, failed: true };
