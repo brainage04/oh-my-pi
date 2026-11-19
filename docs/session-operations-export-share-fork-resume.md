@@ -493,10 +493,11 @@ a revived agent's turn the lifecycle teardown disposes.
    background job of its parent, under the subagent's id. The lifecycle reviver
    rebuilds it from its transcript, the turn goes on as below, and the parent
    receives the result as the job's ordinary `async-result`, so a parent waiting on
-   that job finds it again. A kept-alive subagent is disposed with its final turn
-   unappended, so its own transcript still ends mid-turn. The parent's
-   `async-result` delivery carries the job's terminal status (`completed` or
-   `failed`, and a cancelled job delivers none), and a child that wrote nothing
+   that job finds it again. A child whose process died without recording an exit
+   (a reboot, a SIGKILL, a power loss) leaves a transcript that still ends
+   mid-turn, so the transcript alone cannot say whether the run was cut off. The
+   parent's `async-result` delivery carries the job's terminal status (`completed`
+   or `failed`, and a cancelled job delivers none), and a child that wrote nothing
    after that delivery is not relaunched. A child that woke again afterwards has a
    newer transcript entry and is restored.
 2. **Then the session's own turn** (`AgentSession.restoreInterruptedTurn`). A turn
