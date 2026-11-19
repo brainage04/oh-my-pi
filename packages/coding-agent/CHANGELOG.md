@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed turn no longer rewrites the whole session file when it is dropped, so long sessions stop stalling and wearing the disk after provider errors.
+- `omp --restore` and `omp --resume` of a session file stored under a named profile's root now activate that profile instead of the default one, and refuse a `--profile` that names a different profile instead of opening the file with the wrong credentials. The exit and `[Recovery]` hints name the session's profile.
+- `omp --restore` no longer relaunches a subagent whose run already delivered a terminal result to its parent: only subagents whose turn the stopping process cut off go on.
+
 ## [19.0.0] - 2026-11-18
 
 ### Breaking Changes
@@ -75,8 +81,6 @@
 - Fixed MCP OAuth reauthentication errors to expose registration endpoints, status details, and remedies, and fixed auth-broker shutdown so refreshed tokens are saved safely.
 - Fixed Spotlight retry and account handling, including waitlisted accounts, rate limits, outages, and request identification.
 - Fixed cross-platform shell and desktop behavior, including macOS startup and redraw performance, Windows file operations and application lookup, speech output, and desktop opening.
-- `omp --restore` and `omp --resume` of a session file stored under a named profile's root now activate that profile instead of the default one, and refuse a `--profile` that names a different profile instead of opening the file with the wrong credentials. The exit and `[Recovery]` hints name the session's profile.
-- `omp --restore` no longer relaunches a subagent whose run already delivered a terminal result to its parent: only subagents whose turn the stopping process cut off go on.
 
 ## [18.22.2] - 2026-11-18
 
@@ -225,7 +229,6 @@
 
 ### Fixed
 
-- A failed turn no longer rewrites the whole session file when it is dropped, so long sessions stop stalling and wearing the disk after provider errors.
 - Deleting or moving large directory trees inside a project no longer stalls language-server file watching ([#19490](https://github.com/can1357/oh-my-pi/pull/19490) by [@H4vC](https://github.com/H4vC)).
 - Reduced CPU and memory usage for long-running subagents as their sessions grow ([#19486](https://github.com/can1357/oh-my-pi/pull/19486) by [@H4vC](https://github.com/H4vC)).
 - Fixed `commit.draft()` incorrectly classifying files deleted or renamed through bash or eval as “Not yours”; they now appear under Review.
