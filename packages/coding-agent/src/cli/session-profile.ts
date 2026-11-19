@@ -11,6 +11,9 @@
  * `--profile` that names a different profile is a mistake worth refusing: the
  * launch would open the file with the wrong credentials, which is the failure
  * this module exists to prevent.
+ *
+ * A session id is resolved against the working directory, so it selects a
+ * profile only when that directory sits inside a profile root.
  */
 import { normalizeProfileName, profileFromSessionPath } from "@oh-my-pi/pi-utils/dirs";
 
