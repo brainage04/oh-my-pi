@@ -77,12 +77,17 @@ function jobStatusOf(job: unknown): { agentId?: string; terminal: boolean } | un
 /**
  * When each subagent's run last ended, from the parent journal's `async-result`
  * deliveries: a delivered `completed` or `failed` result is the parent's own
- * record that the run ended, written after the child's last transcript entry. A
- * child that finished leaves a mid-turn tail when its process was parked instead
- * of disposed (nothing appends its final message), so {@link hasRestorableTurn}
- * alone reads it as interrupted; this is the signal that says the run was over. A
- * child that woke again afterward has a newer transcript entry, and
- * {@link restoreSubagents} keeps restoring it.
+ * record that the run ended, written after the child's last transcript entry.
+ *
+ * A child whose process died without recording an exit (a reboot, a SIGKILL, a
+ * power loss) leaves a transcript that still ends mid-turn, so
+ * {@link hasRestorableTurn} reads it as interrupted. A clean dispose is not that
+ * case: parking a kept-alive subagent disposes it (`agent-lifecycle.ts:441`),
+ * which appends a `session_exit` of kind `normal` (`agent-session.ts:7202`,
+ * `:4219-4221`), and `hasRestorableTurn` refuses that (`exit-diagnostics.ts:193`).
+ * The parent's delivery is the only record that such a run ended. A child that
+ * woke again afterward has a newer transcript entry, and {@link restoreSubagents}
+ * keeps restoring it.
  *
  * A journal written before deliveries carried `status` and `agentId` cannot prove
  * a run ended, so such an entry is not a cutoff: a finished child from that era
