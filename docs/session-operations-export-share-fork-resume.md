@@ -519,8 +519,9 @@ The precedence over the environment differs from `--profile`'s on purpose. An
 explicit `--profile` outranks `OMP_PROFILE`/`PI_PROFILE`, and a conflicting one is
 refused. With no flag, the session's own profile outranks an environment profile,
 because only those credentials can load the file, and the launch writes one line to
-stderr naming the profile it ignored. A session id (`--resume <id>`) names no path,
-so it never selects a profile this way.
+stderr naming the profile it ignored. A session id (`--resume <id>`) is resolved
+against the working directory, so it selects a profile only when that directory
+sits inside a profile root.
 
 ## CLI `--continue`
 
