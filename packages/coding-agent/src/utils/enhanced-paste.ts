@@ -103,9 +103,10 @@ function choosePasteMime(
 }
 
 /**
- * How long the terminal gets to answer a listing or a read request. The native clipboard reader
- * gives a subprocess 2 s (`clipboard.ts` `spawnCapture`), and a terminal round trip is shorter
- * than a process spawn, so 5 s only fires when the terminal has stopped answering.
+ * How long the terminal gets to answer a listing or a read request before the paste is dropped.
+ * A chosen bound, not a measured one: over Tern the read crosses the SSH link to the laptop's
+ * clipboard, and that path has not been timed. It is far above a local round trip and only fires
+ * when the terminal has stopped answering, where the alternative is a composer that never types.
  */
 export const PASTE_READ_TIMEOUT_MS = 5000;
 
@@ -152,15 +153,15 @@ export class EnhancedPasteController {
 	}
 
 	/**
-	 * The terminal is taking too long, so typing resumes now. The paste stays active: a terminal
-	 * that answers late still delivers its image, and the next `OK` replaces this paste anyway.
-	 * No status here, because the answer may still arrive and the message would be wrong.
+	 * The terminal is taking too long, so the paste ends here: typing resumes and a late answer is
+	 * dropped. Keeping it active would let its stale read swallow the next paste's listing, and
+	 * would land the image after keys typed in the meantime.
 	 */
-	#releaseOnTimeout(paste: Paste): void {
+	#endOnTimeout(paste: Paste): void {
 		if (this.#active !== paste) return;
-		clearTimeout(paste.timer);
-		paste.timer = undefined;
-		paste.release();
+		this.#active = undefined;
+		this.#handlers.showStatus("Clipboard paste timed out");
+		this.#abandon(paste);
 	}
 
 	async #handlePacket(packet: Osc5522Packet): Promise<void> {
@@ -208,7 +209,7 @@ export class EnhancedPasteController {
 			},
 			timer: undefined,
 		};
-		paste.timer = setTimeout(() => this.#releaseOnTimeout(paste), PASTE_READ_TIMEOUT_MS);
+		paste.timer = setTimeout(() => this.#endOnTimeout(paste), PASTE_READ_TIMEOUT_MS);
 		this.#active = paste;
 	}
 

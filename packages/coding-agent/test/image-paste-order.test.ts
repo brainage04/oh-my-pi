@@ -17,15 +17,12 @@ import { CustomEditor } from "@oh-my-pi/pi-tui/prompt/custom-editor";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { getEditorTheme } from "@oh-my-pi/pi-tui/theme/tui-adapters";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { EnhancedPasteController } from "@oh-my-pi/pi-coding-agent/utils/enhanced-paste";
+import { EnhancedPasteController, PASTE_READ_TIMEOUT_MS } from "@oh-my-pi/pi-coding-agent/utils/enhanced-paste";
 import { InputController } from "@oh-my-pi/pi-coding-agent/modes/controllers/input-controller";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { beginSettingsTest, restoreSettingsTestState, type SettingsTestState } from "./helpers/settings-test-state";
-
-/** Longer than any read deadline the controller could use, so the test never mirrors the constant. */
-const PAST_ANY_DEADLINE_MS = 60_000;
 
 const TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD3sAAAAASUVORK5CYII=";
 
@@ -297,7 +294,7 @@ describe("image paste ordering in the composer", () => {
 			for (const input of LISTING) controller.handleInput(input);
 			for (const input of IMAGE_BODY) controller.handleInput(input);
 			// The insert is still running when the read deadline would have expired.
-			vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS);
+			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
 			expect(held).toBe(1);
 
 			insert.resolve();
@@ -310,7 +307,7 @@ describe("image paste ordering in the composer", () => {
 		}
 	});
 
-	it("still delivers an image whose read answers after the deadline", async () => {
+	it("drops a read that answers after the deadline instead of landing it late", async () => {
 		vi.useFakeTimers();
 		const log: string[] = [];
 		const controller = new EnhancedPasteController({
@@ -327,13 +324,76 @@ describe("image paste ordering in the composer", () => {
 		});
 		try {
 			for (const input of LISTING) controller.handleInput(input);
-			vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS);
+			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
 			for (const input of IMAGE_BODY) controller.handleInput(input);
 			for (let i = 0; i < 50; i++) await Promise.resolve();
 
-			expect(log).toEqual(["image"]);
+			expect(log).toEqual(["status:Clipboard paste timed out"]);
 		} finally {
 			vi.useRealTimers();
+		}
+	});
+
+	it("lets the next paste through after a read the terminal never answered", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		let held = 0;
+		const controller = new EnhancedPasteController({
+			write: () => {},
+			pasteText: () => log.push("text"),
+			pasteImage: () => {
+				log.push("image");
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: message => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => {
+				held++;
+				return () => {
+					held--;
+				};
+			},
+		});
+		try {
+			// The first paste's read is never answered.
+			for (const input of LISTING) controller.handleInput(input);
+			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
+			expect(held).toBe(0);
+
+			// The next paste arrives whole and must land.
+			for (const input of LISTING) controller.handleInput(input);
+			for (const input of IMAGE_BODY) controller.handleInput(input);
+			for (let i = 0; i < 50; i++) await Promise.resolve();
+
+			expect(log).toEqual(["status:Clipboard paste timed out", "image"]);
+			expect(held).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("lets typing resume after a read the terminal never answered, then takes the next paste", async () => {
+		vi.useFakeTimers();
+		const { editor, send, showStatus, tempDir, chipLanded } = await createHarness();
+		try {
+			// The first paste's read is never answered.
+			for (const input of LISTING) send(input);
+			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
+			expect(showStatus).toHaveBeenCalledWith("Clipboard paste timed out");
+
+			// Typing is not frozen, and the next paste still lands.
+			send("x");
+			expect(editor.getText()).toBe("x");
+			for (const input of LISTING) send(input);
+			for (const input of IMAGE_BODY) send(input);
+			await chipLanded();
+
+			expect(editor.pendingImages).toHaveLength(1);
+			expect(editor.getText()).toBe(`x${chipLabel("image", 1)} `);
+		} finally {
+			vi.useRealTimers();
+			await tempDir.remove();
 		}
 	});
 
@@ -348,10 +408,10 @@ describe("image paste ordering in the composer", () => {
 			send("x");
 			expect(editor.getText()).toBe("");
 
-			vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS);
+			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
 
 			expect(editor.getText()).toBe("x");
-			expect(showStatus).not.toHaveBeenCalled();
+			expect(showStatus).toHaveBeenCalledWith("Clipboard paste timed out");
 		} finally {
 			vi.useRealTimers();
 			await tempDir.remove();
