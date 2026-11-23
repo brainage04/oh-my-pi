@@ -1750,14 +1750,27 @@ export class CustomEditor extends Editor {
 		}
 	}
 
+	/** Hold later keystrokes behind a paste the editor did not start: an OSC 5522 clipboard read
+	 *  delivered to a TUI input listener, which never reaches {@link handleInput}. Returns the
+	 *  release; call it once the paste has landed so the queued keys drain after the image. */
+	holdPaste(): () => void {
+		this.#pasteInFlight++;
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			this.#onPasteSettled();
+		};
+	}
+
 	/** Track `promise` as an in-flight paste so subsequent `handleInput` calls queue behind it,
 	 *  then drain the queue once it settles. Codex PR #3602 review: without this, a trailing
 	 *  keystroke (Enter most painfully) in the same stdin read processes synchronously while the
 	 *  clipboard read is still pending — submit fires with the text but `pendingImages` is still
 	 *  empty and the image lands on the *next* draft instead. */
 	#trackAsyncPaste(promise: Promise<unknown>): void {
-		this.#pasteInFlight++;
-		void promise.then(this.#onPasteSettled, this.#onPasteSettled);
+		const release = this.holdPaste();
+		void promise.then(release, release);
 	}
 
 	/** True while a clipboard-image or image-path paste is still landing; later keys queue behind it. */

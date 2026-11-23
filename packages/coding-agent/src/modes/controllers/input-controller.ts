@@ -1053,9 +1053,19 @@ export class InputController {
 			showStatus: message => this.ctx.showStatus(message),
 			pasteNative: () => {
 				if (!this.#clipboardIsTerminalLocal()) return false;
-				void this.handleImagePaste();
+				// Same hold as the packet path: this read is async too, and the editor's own
+				// counter only sees the Ctrl+V route.
+				const release = this.#composerTakesPaste(this.ctx.ui.getFocused())
+					? this.ctx.editor.holdPaste()
+					: undefined;
+				void this.handleImagePaste().finally(() => release?.());
 				return true;
 			},
+			// The packets arrive through a TUI input listener, so the composer's own paste
+			// counter never sees this paste; hold it here or a fast typist's next character
+			// lands before the image chip. A focused prompt orders its own pastes.
+			holdInput: () =>
+				this.#composerTakesPaste(this.ctx.ui.getFocused()) ? this.ctx.editor.holdPaste() : () => {},
 		});
 		this.ctx.ui.addInputListener(data => (this.#enhancedPaste?.handleInput(data) ? { consume: true } : undefined));
 		this.ctx.ui.addStartListener(() => this.#enhancedPaste?.enable());
