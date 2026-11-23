@@ -50,6 +50,12 @@ export interface EnhancedPasteHandlers {
 	 * when the system clipboard is unreachable (remote session), so the unsupported status shows.
 	 */
 	pasteNative(): boolean;
+	/**
+	 * Hold the destination's keystrokes until the returned release runs. The paste arrives as
+	 * terminal packets, not through the editor's own input path, so without this a character
+	 * typed while the clipboard read is still resolving lands before the image chip.
+	 */
+	holdInput(): () => void;
 }
 
 export function isOsc5522Packet(data: string): boolean {
@@ -96,9 +102,15 @@ function choosePasteMime(
 	return mimes.includes(TEXT_MIME_TYPE) ? { kind: "text", mimeType: TEXT_MIME_TYPE } : undefined;
 }
 
+/** A terminal that never answers a read request must not freeze the composer: the hold ends here. */
+const PASTE_HOLD_TIMEOUT_MS = 5000;
+
 export class EnhancedPasteController {
 	#state: PasteState | undefined;
 	#handlers: EnhancedPasteHandlers;
+	/** Releases the destination's input hold for the paste in progress, if one is held. */
+	#release: (() => void) | undefined;
+	#holdTimer: NodeJS.Timeout | undefined;
 
 	constructor(handlers: EnhancedPasteHandlers) {
 		this.#handlers = handlers;
@@ -110,7 +122,7 @@ export class EnhancedPasteController {
 
 	disable(): void {
 		this.#handlers.write("\x1b[?5522l");
-		this.#state = undefined;
+		this.#settle();
 	}
 
 	handleInput(data: string): boolean {
@@ -118,6 +130,23 @@ export class EnhancedPasteController {
 		if (!packet) return false;
 		void this.#handlePacket(packet);
 		return true;
+	}
+
+	/** End the paste: drop its state and let the destination's queued keystrokes through. */
+	#settle(): void {
+		this.#state = undefined;
+		clearTimeout(this.#holdTimer);
+		this.#holdTimer = undefined;
+		const release = this.#release;
+		this.#release = undefined;
+		release?.();
+	}
+
+	/** A terminal that never answers leaves the composer held; say so and let typing resume. */
+	#settleOnTimeout(): void {
+		if (this.#release === undefined) return;
+		this.#handlers.showStatus("Clipboard paste timed out");
+		this.#settle();
 	}
 
 	async #handlePacket(packet: Osc5522Packet): Promise<void> {
@@ -138,8 +167,8 @@ export class EnhancedPasteController {
 			return;
 		}
 		if (status) {
-			this.#state = undefined;
 			this.#handlers.showStatus(`Enhanced paste failed: ${status}`);
+			this.#settle();
 		}
 	}
 
@@ -152,6 +181,10 @@ export class EnhancedPasteController {
 			pw: packet.metadata.get("pw"),
 			loc: loc === "primary" ? loc : undefined,
 		};
+		if (this.#release === undefined) {
+			this.#release = this.#handlers.holdInput();
+			this.#holdTimer = setTimeout(() => this.#settleOnTimeout(), PASTE_HOLD_TIMEOUT_MS);
+		}
 	}
 
 	#handleData(packet: Osc5522Packet): void {
@@ -199,34 +232,37 @@ export class EnhancedPasteController {
 			return;
 		}
 		this.#state = undefined;
-		const bytes = Buffer.concat(state.chunks.map(chunk => Buffer.from(chunk, "base64")));
-		if (bytes.byteLength === 0) {
-			this.#handlers.showStatus("Clipboard paste was empty");
-			return;
+		try {
+			const bytes = Buffer.concat(state.chunks.map(chunk => Buffer.from(chunk, "base64")));
+			if (bytes.byteLength === 0) {
+				this.#handlers.showStatus("Clipboard paste was empty");
+				return;
+			}
+			if (state.kind === "text") {
+				this.#handlers.pasteText(bytes.toString("utf8"));
+				return;
+			}
+			if (state.kind === "html") {
+				await this.#handlers.pasteHtml(bytes.toString("utf8"));
+				return;
+			}
+			await this.#handlers.pasteImage({
+				type: "image",
+				data: bytes.toString("base64"),
+				mimeType: state.mimeType,
+			});
+		} finally {
+			this.#settle();
 		}
-		if (state.kind === "text") {
-			this.#handlers.pasteText(bytes.toString("utf8"));
-			return;
-		}
-		if (state.kind === "html") {
-			await this.#handlers.pasteHtml(bytes.toString("utf8"));
-			return;
-		}
-		await this.#handlers.pasteImage({
-			type: "image",
-			data: bytes.toString("base64"),
-			mimeType: state.mimeType,
-		});
 	}
 
 	#finishListing(state: PasteListingState): void {
 		const selected = choosePasteMime(state.mimes, this.#handlers.acceptsHtml());
 		if (!selected) {
-			this.#state = undefined;
 			// Native readers use the regular clipboard, not the terminal's primary selection.
-			if (state.loc === "primary" || !this.#handlers.pasteNative()) {
-				this.#handlers.showStatus("Clipboard paste has no supported text or image data");
-			}
+			const native = state.loc !== "primary" && this.#handlers.pasteNative();
+			if (!native) this.#handlers.showStatus("Clipboard paste has no supported text or image data");
+			this.#settle();
 			return;
 		}
 
