@@ -196,7 +196,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 
 		// `--resume=<id|path>` (and the `--restore=`/`--session=` spellings) carries
 		// its value inline, which `parseArgs` splices out before its own
-		// OPTIONAL_VALUE_FLAGS arm (`args.ts:284-291`). The bootstrap sees the raw
+		// OPTIONAL_VALUE_FLAGS arm (`args.ts:286-293`). The bootstrap sees the raw
 		// token, so it must take the value from the `=` form too or a restore of a
 		// profile session would activate no profile.
 		const inlineOptional = inlineOptionalValue(arg);
