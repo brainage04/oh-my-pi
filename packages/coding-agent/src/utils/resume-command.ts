@@ -1,4 +1,4 @@
-import { APP_NAME, getActiveProfile } from "@oh-my-pi/pi-utils";
+import { APP_NAME, getActiveProfile, profileFromSessionPath } from "@oh-my-pi/pi-utils";
 
 /**
  * Build the shell command that resumes a session by id.
@@ -10,9 +10,13 @@ import { APP_NAME, getActiveProfile } from "@oh-my-pi/pi-utils";
  * <name>` so the emitted hint is a command the user can paste verbatim
  * (issue #9018). Profile names are validated against a strict charset
  * (`normalizeProfileName`), so no shell quoting is required.
+ *
+ * `sessionFile` covers the process that runs without a profile: a hint printed
+ * for a session stored under a profile's root names that profile even when the
+ * active profile is the default one.
  */
-export function resumeCommand(sessionId: string): string {
-	const profile = getActiveProfile();
+export function resumeCommand(sessionId: string, sessionFile?: string): string {
+	const profile = getActiveProfile() ?? (sessionFile === undefined ? undefined : profileFromSessionPath(sessionFile));
 	const profileFlag = profile ? `--profile ${profile} ` : "";
 	return `${APP_NAME} ${profileFlag}--resume ${sessionId}`;
 }

@@ -38,6 +38,7 @@ import {
 import { installSqliteLockShim } from "@oh-my-pi/pi-natives/sqlite-locks";
 import { isNativeShell, runNativeShell } from "./cli/native-shell";
 import { extractProfileFlags } from "./cli/profile-bootstrap";
+import { chooseSessionProfile } from "./cli/session-profile";
 import {
 	AUTO_UPDATE_WORKER_ARG,
 	COMPUTER_WORKER_ARG,
@@ -490,9 +491,11 @@ export async function runCli(argv: string[]): Promise<void> {
 	try {
 		const extracted = extractProfileFlags(resolvedArgv);
 		resolvedArgv = extracted.argv;
-		if (extracted.profile !== undefined) {
-			setProfile(extracted.profile);
-		} else {
+		// A session file under a named profile's root names the profile that can
+		// load it: without it the launch reads the default profile's auth and a
+		// saved model the profile's credentials serve fails to restore.
+		const choice = chooseSessionProfile(extracted.profile, extracted.sessionSource);
+		if (choice.kind === "none") {
 			// No explicit --profile: activate any OMP_PROFILE/PI_PROFILE inherited
 			// from the environment. Module-load resolution deliberately swallows an
 			// invalid value to avoid an uncaught throw before this try/catch is in
@@ -502,6 +505,8 @@ export async function runCli(argv: string[]): Promise<void> {
 			// calling setProfile keeps every later path helper on the env-selected
 			// profile instead of the default agent directory.
 			setProfile(resolveProfileEnv(process.env.OMP_PROFILE, process.env.PI_PROFILE));
+		} else {
+			setProfile(choice.profile);
 		}
 		if (extracted.aliasName !== undefined) {
 			// Command boundary: shell/path setup is used only by --alias.

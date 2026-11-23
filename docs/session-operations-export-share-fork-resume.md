@@ -502,6 +502,12 @@ combined with `--continue`, `--fork`, imports, `--goal` or `--no-session`.
 `/restart` drops a launch `--restore` like the other one-shot selectors and adds
 its own for the current session.
 
+A `--restore` or `--resume` of a session file stored under a named profile's root
+(`<omp home>/profiles/<name>/`) activates profile `<name>` when no `--profile` was
+given, and fails with a clear error when `--profile` names a different profile.
+Without it the launch reads the default profile's credentials, so a model only the
+profile's auth serves fails to restore.
+
 ## CLI `--continue`
 
 `SessionManager.continueRecent(cwd, sessionDir)`:
