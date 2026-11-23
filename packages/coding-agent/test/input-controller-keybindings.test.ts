@@ -1467,7 +1467,7 @@ describe("InputController image paste into an image-accepting prompt", () => {
 
 			offerTextAndHtml(listeners);
 			expect(
-				written.mock.calls.some(([data]) => data.includes(`type=read;${base64(mime)}`)),
+				written.mock.calls.some(([data]) => data.includes(`;${base64(mime)}`)),
 				`requests ${mime}`,
 			).toBe(true);
 

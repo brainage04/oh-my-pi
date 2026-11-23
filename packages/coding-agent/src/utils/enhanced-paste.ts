@@ -107,6 +107,7 @@ function choosePasteMime(
  * A chosen bound, not a measured one: over Tern the read crosses the SSH link to the laptop's
  * clipboard, and that path has not been timed. It is far above a local round trip and only fires
  * when the terminal has stopped answering, where the alternative is a composer that never types.
+ * The `clipboard.pasteTimeoutMs` setting overrides it for a slow link.
  */
 export const PASTE_READ_TIMEOUT_MS = 5000;
 
@@ -116,15 +117,27 @@ interface Paste {
 	/** Releases the hold once; later calls do nothing. */
 	release(): void;
 	timer: NodeJS.Timeout | undefined;
+	/**
+	 * The `id` this paste's read request carried. The terminal echoes it on every response
+	 * (kitty's clipboard spec, "Support for terminal multiplexers"), so an answer to an abandoned
+	 * read is recognisable and cannot be applied to a later paste. Undefined when the terminal
+	 * sent no `id` to echo, which is the case for an unsolicited paste event.
+	 */
+	id: string | undefined;
 }
 
 export class EnhancedPasteController {
 	/** The paste the next packet belongs to; undefined between pastes. */
 	#active: Paste | undefined;
+	/** Source of the `id` each read request carries, so its answers are recognisable. */
+	#readSeq = 0;
 	#handlers: EnhancedPasteHandlers;
+	/** Read deadline in ms; the host passes the `clipboard.pasteTimeoutMs` setting. */
+	#timeoutMs: number;
 
-	constructor(handlers: EnhancedPasteHandlers) {
+	constructor(handlers: EnhancedPasteHandlers, timeoutMs = PASTE_READ_TIMEOUT_MS) {
 		this.#handlers = handlers;
+		this.#timeoutMs = timeoutMs;
 	}
 
 	enable(): void {
@@ -173,6 +186,11 @@ export class EnhancedPasteController {
 			this.#handleOk(packet);
 			return;
 		}
+		// Every response to a read request carries the request's `id` back. A response whose id is
+		// not the active paste's answers a read this controller already gave up on, so it is
+		// dropped: applying it would land the wrong image in a later paste.
+		const id = packet.metadata.get("id");
+		if (id !== undefined && id !== this.#active?.id) return;
 		if (status === "DATA") {
 			this.#handleData(packet);
 			return;
@@ -191,6 +209,11 @@ export class EnhancedPasteController {
 	#handleOk(packet: Osc5522Packet): void {
 		// A read request is already outstanding, so this OK answers it rather than starting a paste.
 		if (this.#active?.state.phase === "reading") return;
+		// An OK that echoes an id belongs to a read this controller already sent, so it answers
+		// that read rather than starting a paste. Only an OK with no id, or with the id of the
+		// paste being replaced, can start one.
+		const id = packet.metadata.get("id");
+		if (id !== undefined && id !== this.#active?.id) return;
 		this.#abandon(this.#active);
 		const loc = packet.metadata.get("loc");
 		const held = this.#handlers.holdInput?.();
@@ -208,8 +231,9 @@ export class EnhancedPasteController {
 				held?.();
 			},
 			timer: undefined,
+			id,
 		};
-		paste.timer = setTimeout(() => this.#endOnTimeout(paste), PASTE_READ_TIMEOUT_MS);
+		paste.timer = setTimeout(() => this.#endOnTimeout(paste), this.#timeoutMs);
 		this.#active = paste;
 	}
 
@@ -307,6 +331,10 @@ export class EnhancedPasteController {
 
 		const encodedMime = Buffer.from(selected.mimeType, "utf8").toString("base64");
 		const metadata = ["type=read"];
+		// The terminal echoes `id` on every response, which is how a late answer to this read is
+		// told apart from a later paste's packets. Valid ids are `[a-zA-Z0-9-_+.]` only.
+		paste.id = `omp-${++this.#readSeq}`;
+		metadata.push(`id=${paste.id}`);
 		if (state.loc) metadata.push(`loc=${state.loc}`);
 		if (state.pw) {
 			metadata.push(`pw=${state.pw}`, `name=${PASTE_EVENT_NAME_BASE64}`);

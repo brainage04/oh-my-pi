@@ -51,6 +51,14 @@ const IMAGE_BODY = [
 	packet("type=read:status=DONE"),
 ];
 
+/** The read half for a request that carried `id`, which the terminal echoes on every response.
+ *  `body` names the payload so a test can tell which paste's image landed. */
+const imageBodyFor = (id: string, body: string) => [
+	packet(`type=read:status=OK:id=${id}`),
+	packet(`type=read:status=DATA:mime=${IMAGE_MIME}:id=${id}`, Buffer.from(body, "utf8").toString("base64")),
+	packet(`type=read:status=DONE:id=${id}`),
+];
+
 async function createHarness() {
 	const tempDir = await TempDir.create("@omp-paste-order-");
 	const sessionManager = SessionManager.inMemory(tempDir.path());
@@ -336,15 +344,102 @@ describe("image paste ordering in the composer", () => {
 		}
 	});
 
-	it("lets the next paste through after a read the terminal never answered", async () => {
+	it("drops a late answer to an abandoned read instead of landing it in the next paste", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		const writes: string[] = [];
+		let held = 0;
+		const controller = new EnhancedPasteController({
+			write: data => writes.push(data),
+			pasteText: () => log.push("text"),
+			pasteImage: image => {
+				log.push(`image:${Buffer.from(image.data, "base64").toString("utf8")}`);
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: message => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => {
+				held++;
+				return () => {
+					held--;
+				};
+			},
+		});
+		/** The `id` the controller put on its last read request. */
+		const lastReadId = () => /id=([a-zA-Z0-9\-_+.]+)/.exec(writes.at(-1) ?? "")?.[1];
+		try {
+			// Paste A's read is never answered, so its deadline ends it.
+			for (const input of LISTING) controller.handleInput(input);
+			const idA = lastReadId();
+			expect(idA).toBeDefined();
+			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
+			expect(held).toBe(0);
+
+			// Paste B arrives whole and must land its own image.
+			for (const input of LISTING) controller.handleInput(input);
+			const idB = lastReadId();
+			expect(idB).not.toBe(idA);
+			for (const input of imageBodyFor(idB!, "B")) controller.handleInput(input);
+			for (let i = 0; i < 50; i++) await Promise.resolve();
+			expect(log).toEqual(["status:Clipboard paste timed out", "image:B"]);
+			expect(held).toBe(0);
+
+			// A's answer finally arrives. It must not land anywhere or take the hold.
+			for (const input of imageBodyFor(idA!, "A")) controller.handleInput(input);
+			for (let i = 0; i < 50; i++) await Promise.resolve();
+			expect(log).toEqual(["status:Clipboard paste timed out", "image:B"]);
+			expect(held).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("honours a host-supplied read deadline", async () => {
 		vi.useFakeTimers();
 		const log: string[] = [];
 		let held = 0;
+		const controller = new EnhancedPasteController(
+			{
+				write: () => {},
+				pasteText: () => log.push("text"),
+				pasteImage: () => {
+					log.push("image");
+				},
+				acceptsHtml: () => false,
+				pasteHtml: () => {},
+				showStatus: message => log.push(`status:${message}`),
+				pasteNative: () => false,
+				holdInput: () => {
+					held++;
+					return () => {
+						held--;
+					};
+				},
+			},
+			1_000,
+		);
+		try {
+			for (const input of LISTING) controller.handleInput(input);
+			vi.advanceTimersByTime(1_001);
+
+			expect(log).toEqual(["status:Clipboard paste timed out"]);
+			expect(held).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not start a phantom paste from a late answer with no paste after it", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		const writes: string[] = [];
+		let held = 0;
 		const controller = new EnhancedPasteController({
-			write: () => {},
+			write: data => writes.push(data),
 			pasteText: () => log.push("text"),
-			pasteImage: () => {
-				log.push("image");
+			pasteImage: image => {
+				log.push(`image:${Buffer.from(image.data, "base64").toString("utf8")}`);
 			},
 			acceptsHtml: () => false,
 			pasteHtml: () => {},
@@ -358,17 +453,16 @@ describe("image paste ordering in the composer", () => {
 			},
 		});
 		try {
-			// The first paste's read is never answered.
 			for (const input of LISTING) controller.handleInput(input);
+			const idA = /id=([a-zA-Z0-9\-_+.]+)/.exec(writes.at(-1) ?? "")?.[1];
+			expect(idA).toBeDefined();
 			vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS + 1);
 			expect(held).toBe(0);
 
-			// The next paste arrives whole and must land.
-			for (const input of LISTING) controller.handleInput(input);
-			for (const input of IMAGE_BODY) controller.handleInput(input);
+			for (const input of imageBodyFor(idA!, "A")) controller.handleInput(input);
 			for (let i = 0; i < 50; i++) await Promise.resolve();
 
-			expect(log).toEqual(["status:Clipboard paste timed out", "image"]);
+			expect(log).toEqual(["status:Clipboard paste timed out"]);
 			expect(held).toBe(0);
 		} finally {
 			vi.useRealTimers();
