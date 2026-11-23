@@ -32,7 +32,6 @@ describe("EnhancedPasteController", () => {
 			pasteHtml: unexpectedHtmlPaste,
 			showStatus: message => statuses.push(message),
 			pasteNative: unexpectedNativePaste,
-			holdInput: () => () => {},
 		});
 
 		controller.enable();
@@ -80,7 +79,6 @@ describe("EnhancedPasteController", () => {
 			pasteHtml: unexpectedHtmlPaste,
 			showStatus: message => pastedText.push(`status:${message}`),
 			pasteNative: unexpectedNativePaste,
-			holdInput: () => () => {},
 		});
 
 		const textMime = Buffer.from("text/plain", "utf8").toString("base64");
@@ -123,7 +121,6 @@ describe("EnhancedPasteController", () => {
 				nativePastes++;
 				return nativeAvailable;
 			},
-			holdInput: () => () => {},
 		});
 
 		// macOS screenshots copied straight to the clipboard list only `image/tiff` (#17696).
@@ -158,7 +155,6 @@ describe("EnhancedPasteController", () => {
 			pasteHtml: unexpectedHtmlPaste,
 			showStatus: message => statuses.push(message),
 			pasteNative: unexpectedNativePaste,
-			holdInput: () => () => {},
 		});
 
 		const tiffMime = Buffer.from("image/tiff", "utf8").toString("base64");
@@ -182,7 +178,6 @@ describe("EnhancedPasteController", () => {
 			pasteHtml: unexpectedHtmlPaste,
 			showStatus: message => pastedText.push(`status:${message}`),
 			pasteNative: unexpectedNativePaste,
-			holdInput: () => () => {},
 		});
 
 		const dot = Buffer.from(".", "utf8").toString("base64");
@@ -228,7 +223,6 @@ describe("EnhancedPasteController", () => {
 			pasteHtml: unexpectedHtmlPaste,
 			showStatus: () => {},
 			pasteNative: unexpectedNativePaste,
-			holdInput: () => () => {},
 		});
 
 		const dot = Buffer.from(".", "utf8").toString("base64");
@@ -266,7 +260,6 @@ describe("EnhancedPasteController", () => {
 				},
 				showStatus: message => pasted.push(`status:${message}`),
 				pasteNative: unexpectedNativePaste,
-				holdInput: () => () => {},
 			});
 			controller.handleInput(packet("type=read:status=OK"));
 			controller.handleInput(packet(`type=read:status=DATA:mime=${dot}`, listing));

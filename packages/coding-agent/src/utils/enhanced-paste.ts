@@ -53,9 +53,10 @@ export interface EnhancedPasteHandlers {
 	/**
 	 * Hold the destination's keystrokes until the returned release runs. The paste arrives as
 	 * terminal packets, not through the editor's own input path, so without this a character
-	 * typed while the clipboard read is still resolving lands before the image chip.
+	 * typed while the clipboard read is still resolving lands before the image chip. Hosts
+	 * without a composer to hold (a dialog, a test) leave it out.
 	 */
-	holdInput(): () => void;
+	holdInput?(): () => void;
 }
 
 export function isOsc5522Packet(data: string): boolean {
@@ -182,7 +183,7 @@ export class EnhancedPasteController {
 			loc: loc === "primary" ? loc : undefined,
 		};
 		if (this.#release === undefined) {
-			this.#release = this.#handlers.holdInput();
+			this.#release = this.#handlers.holdInput?.() ?? (() => {});
 			this.#holdTimer = setTimeout(() => this.#settleOnTimeout(), PASTE_HOLD_TIMEOUT_MS);
 		}
 	}
