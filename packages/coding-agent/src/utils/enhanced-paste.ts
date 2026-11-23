@@ -53,8 +53,7 @@ export interface EnhancedPasteHandlers {
 	/**
 	 * Hold the destination's keystrokes until the returned release runs. The paste arrives as
 	 * terminal packets, not through the editor's own input path, so without this a character
-	 * typed while the clipboard read is still resolving lands before the image chip. Hosts
-	 * without a composer to hold (a dialog, a test) leave it out.
+	 * typed while the clipboard read is still resolving lands before the image chip.
 	 */
 	holdInput?(): () => void;
 }
@@ -103,15 +102,25 @@ function choosePasteMime(
 	return mimes.includes(TEXT_MIME_TYPE) ? { kind: "text", mimeType: TEXT_MIME_TYPE } : undefined;
 }
 
-/** A terminal that never answers a read request must not freeze the composer: the hold ends here. */
-const PASTE_HOLD_TIMEOUT_MS = 5000;
+/**
+ * How long the terminal gets to answer a listing or a read request. The native clipboard reader
+ * gives a subprocess 2 s (`clipboard.ts` `spawnCapture`), and a terminal round trip is shorter
+ * than a process spawn, so 5 s only fires when the terminal has stopped answering.
+ */
+export const PASTE_READ_TIMEOUT_MS = 5000;
+
+/** One clipboard paste: its protocol state, the destination's input hold, and its read deadline. */
+interface Paste {
+	state: PasteState;
+	/** Releases the hold once; later calls do nothing. */
+	release(): void;
+	timer: NodeJS.Timeout | undefined;
+}
 
 export class EnhancedPasteController {
-	#state: PasteState | undefined;
+	/** The paste the next packet belongs to; undefined between pastes. */
+	#active: Paste | undefined;
 	#handlers: EnhancedPasteHandlers;
-	/** Releases the destination's input hold for the paste in progress, if one is held. */
-	#release: (() => void) | undefined;
-	#holdTimer: NodeJS.Timeout | undefined;
 
 	constructor(handlers: EnhancedPasteHandlers) {
 		this.#handlers = handlers;
@@ -123,7 +132,8 @@ export class EnhancedPasteController {
 
 	disable(): void {
 		this.#handlers.write("\x1b[?5522l");
-		this.#settle();
+		this.#abandon(this.#active);
+		this.#active = undefined;
 	}
 
 	handleInput(data: string): boolean {
@@ -133,21 +143,24 @@ export class EnhancedPasteController {
 		return true;
 	}
 
-	/** End the paste: drop its state and let the destination's queued keystrokes through. */
-	#settle(): void {
-		this.#state = undefined;
-		clearTimeout(this.#holdTimer);
-		this.#holdTimer = undefined;
-		const release = this.#release;
-		this.#release = undefined;
-		release?.();
+	/** Stop waiting on `paste` and let its hold go. */
+	#abandon(paste: Paste | undefined): void {
+		if (!paste) return;
+		clearTimeout(paste.timer);
+		paste.timer = undefined;
+		paste.release();
 	}
 
-	/** A terminal that never answers leaves the composer held; say so and let typing resume. */
-	#settleOnTimeout(): void {
-		if (this.#release === undefined) return;
-		this.#handlers.showStatus("Clipboard paste timed out");
-		this.#settle();
+	/**
+	 * The terminal is taking too long, so typing resumes now. The paste stays active: a terminal
+	 * that answers late still delivers its image, and the next `OK` replaces this paste anyway.
+	 * No status here, because the answer may still arrive and the message would be wrong.
+	 */
+	#releaseOnTimeout(paste: Paste): void {
+		if (this.#active !== paste) return;
+		clearTimeout(paste.timer);
+		paste.timer = undefined;
+		paste.release();
 	}
 
 	async #handlePacket(packet: Osc5522Packet): Promise<void> {
@@ -169,27 +182,38 @@ export class EnhancedPasteController {
 		}
 		if (status) {
 			this.#handlers.showStatus(`Enhanced paste failed: ${status}`);
-			this.#settle();
+			this.#abandon(this.#active);
+			this.#active = undefined;
 		}
 	}
 
 	#handleOk(packet: Osc5522Packet): void {
-		if (this.#state?.phase === "reading") return;
+		// A read request is already outstanding, so this OK answers it rather than starting a paste.
+		if (this.#active?.state.phase === "reading") return;
+		this.#abandon(this.#active);
 		const loc = packet.metadata.get("loc");
-		this.#state = {
-			phase: "listing",
-			mimes: [],
-			pw: packet.metadata.get("pw"),
-			loc: loc === "primary" ? loc : undefined,
+		const held = this.#handlers.holdInput?.();
+		let released = false;
+		const paste: Paste = {
+			state: {
+				phase: "listing",
+				mimes: [],
+				pw: packet.metadata.get("pw"),
+				loc: loc === "primary" ? loc : undefined,
+			},
+			release: () => {
+				if (released) return;
+				released = true;
+				held?.();
+			},
+			timer: undefined,
 		};
-		if (this.#release === undefined) {
-			this.#release = this.#handlers.holdInput?.() ?? (() => {});
-			this.#holdTimer = setTimeout(() => this.#settleOnTimeout(), PASTE_HOLD_TIMEOUT_MS);
-		}
+		paste.timer = setTimeout(() => this.#releaseOnTimeout(paste), PASTE_READ_TIMEOUT_MS);
+		this.#active = paste;
 	}
 
 	#handleData(packet: Osc5522Packet): void {
-		const state = this.#state;
+		const state = this.#active?.state;
 		if (!state) return;
 		const encodedMime = packet.metadata.get("mime");
 		if (!encodedMime) return;
@@ -226,13 +250,18 @@ export class EnhancedPasteController {
 	}
 
 	async #handleDone(): Promise<void> {
-		const state = this.#state;
-		if (!state) return;
+		const paste = this.#active;
+		if (!paste) return;
+		const state = paste.state;
 		if (state.phase === "listing") {
-			this.#finishListing(state);
+			this.#finishListing(paste, state);
 			return;
 		}
-		this.#state = undefined;
+		// The terminal answered, so the read deadline no longer applies. The hold stays until the
+		// insert lands: a slow blob write or image probe must not let a key in ahead of the chip.
+		clearTimeout(paste.timer);
+		paste.timer = undefined;
+		this.#active = undefined;
 		try {
 			const bytes = Buffer.concat(state.chunks.map(chunk => Buffer.from(chunk, "base64")));
 			if (bytes.byteLength === 0) {
@@ -253,21 +282,23 @@ export class EnhancedPasteController {
 				mimeType: state.mimeType,
 			});
 		} finally {
-			this.#settle();
+			paste.release();
+			paste.release = () => {};
 		}
 	}
 
-	#finishListing(state: PasteListingState): void {
+	#finishListing(paste: Paste, state: PasteListingState): void {
 		const selected = choosePasteMime(state.mimes, this.#handlers.acceptsHtml());
 		if (!selected) {
 			// Native readers use the regular clipboard, not the terminal's primary selection.
 			const native = state.loc !== "primary" && this.#handlers.pasteNative();
 			if (!native) this.#handlers.showStatus("Clipboard paste has no supported text or image data");
-			this.#settle();
+			this.#active = undefined;
+			this.#abandon(paste);
 			return;
 		}
 
-		this.#state = {
+		paste.state = {
 			phase: "reading",
 			kind: selected.kind,
 			mimeType: selected.mimeType,
