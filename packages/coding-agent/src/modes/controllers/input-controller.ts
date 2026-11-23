@@ -1054,8 +1054,8 @@ export class InputController {
 			pasteNative: () => {
 				if (!this.#clipboardIsTerminalLocal()) return false;
 				// The image branch of `handleImagePaste` awaits a blob write and an image probe, so
-				// it needs the same hold. Its text branch queues a bracketed paste behind this hold
-				// and drains it on release, which keeps the text after the image it followed.
+				// it needs the same hold. Its text branch queues a bracketed paste behind this hold;
+				// the queue is FIFO, so the text drains after anything attached before it.
 				const release = this.#holdComposerInput();
 				void this.handleImagePaste().finally(() => release());
 				return true;
