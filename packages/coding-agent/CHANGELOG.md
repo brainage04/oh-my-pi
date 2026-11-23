@@ -23,6 +23,7 @@
 ### Changed
 
 - The bash tool's visualization keeps a one-line awk, jq, regex or other embedded program highlighted where it appears in the command; only multi-line programs move below it behind a `⟦awk ↓⟧`-style chip.
+- `clipboard.pasteTimeoutMs` sets how long a terminal gets to answer a clipboard read before the paste is dropped (default 5000 ms), for a slow remote link.
 
 ### Fixed
 
