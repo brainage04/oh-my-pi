@@ -260,4 +260,43 @@ describe("an environment profile against the session's own", () => {
 		expect(process.exitCode).toBe(0);
 		expect(errSpy.mock.calls.map(call => String(call[0] ?? "")).join("")).not.toContain("belongs to profile");
 	});
+
+	it("starts under a valid --profile when OMP_PROFILE is invalid", async () => {
+		vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		setProfile(undefined);
+		process.env.OMP_PROFILE = "..";
+		delete process.env.PI_PROFILE;
+
+		await runCli(["--version", "--profile", "work"]);
+
+		expect(process.exitCode).toBe(0);
+		expect(getActiveProfile()).toBe("work");
+	});
+
+	it("starts under the session's profile when OMP_PROFILE is invalid", async () => {
+		vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+		const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		setProfile(undefined);
+		process.env.OMP_PROFILE = "..";
+		delete process.env.PI_PROFILE;
+		const sessionFile = path.join(
+			os.homedir(),
+			configDir,
+			"profiles",
+			"work",
+			"agent",
+			"sessions",
+			"-tmp",
+			"s.jsonl",
+		);
+		await fs.mkdir(path.dirname(sessionFile), { recursive: true });
+		await fs.writeFile(sessionFile, "");
+
+		await runCli(["--version", "--restore", sessionFile]);
+
+		expect(process.exitCode).toBe(0);
+		expect(getActiveProfile()).toBe("work");
+		expect(errSpy.mock.calls.map(call => String(call[0] ?? "")).join("")).not.toContain("Invalid OMP profile");
+	});
 });
