@@ -69,7 +69,7 @@ import {
 	readTextFromClipboard,
 } from "../../utils/clipboard";
 import { commandUsage, hintUsage } from "../../utils/usage-counter";
-import { EnhancedPasteController } from "../../utils/enhanced-paste";
+import { EnhancedPasteController, PASTE_READ_TIMEOUT_MS } from "../../utils/enhanced-paste";
 import { htmlToPaste } from "../../utils/html-paste";
 import { getEditorCommand, openInEditor } from "../../utils/external-editor";
 import { resendProgramStatus } from "../../utils/run-status";
@@ -1066,7 +1066,7 @@ export class InputController {
 				},
 				holdInput: () => this.#holdComposerInput(),
 			},
-			isSettingsInitialized() ? cfgClipboardPasteTimeoutMs.get(settings) : undefined,
+			() => (isSettingsInitialized() ? cfgClipboardPasteTimeoutMs.get(settings) : PASTE_READ_TIMEOUT_MS),
 		);
 		this.ctx.ui.addInputListener(data => (this.#enhancedPaste?.handleInput(data) ? { consume: true } : undefined));
 		this.ctx.ui.addStartListener(() => this.#enhancedPaste?.enable());

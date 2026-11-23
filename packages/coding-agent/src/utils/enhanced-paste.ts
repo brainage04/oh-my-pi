@@ -111,6 +111,21 @@ function choosePasteMime(
  */
 export const PASTE_READ_TIMEOUT_MS = 5000;
 
+/** `setTimeout` stores its delay in a signed 32-bit int, so anything above this fires at once. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * A usable read deadline: a finite integer from 1 ms to `setTimeout`'s ceiling. Anything else
+ * (0, a negative, NaN, Infinity, a fraction, an overflow) falls back to the default, because
+ * `setTimeout` would otherwise fire on the next tick and drop every paste.
+ */
+export function clampPasteTimeoutMs(value: number | undefined): number {
+	if (value === undefined || !Number.isFinite(value)) return PASTE_READ_TIMEOUT_MS;
+	const ms = Math.trunc(value);
+	if (ms < 1 || ms > MAX_TIMER_DELAY_MS) return PASTE_READ_TIMEOUT_MS;
+	return ms;
+}
+
 /** One clipboard paste: its protocol state, the destination's input hold, and its read deadline. */
 interface Paste {
 	state: PasteState;
@@ -120,8 +135,8 @@ interface Paste {
 	/**
 	 * The `id` this paste's read request carried. The terminal echoes it on every response
 	 * (kitty's clipboard spec, "Support for terminal multiplexers"), so an answer to an abandoned
-	 * read is recognisable and cannot be applied to a later paste. Undefined when the terminal
-	 * sent no `id` to echo, which is the case for an unsolicited paste event.
+	 * read is recognisable and cannot be applied to a later paste. Undefined when the terminal's
+	 * answer carries no `id`, which the id check then lets through.
 	 */
 	id: string | undefined;
 }
@@ -132,12 +147,12 @@ export class EnhancedPasteController {
 	/** Source of the `id` each read request carries, so its answers are recognisable. */
 	#readSeq = 0;
 	#handlers: EnhancedPasteHandlers;
-	/** Read deadline in ms; the host passes the `clipboard.pasteTimeoutMs` setting. */
-	#timeoutMs: number;
+	/** Reads the `clipboard.pasteTimeoutMs` setting, so a change applies without a restart. */
+	#readTimeoutMs: () => number;
 
-	constructor(handlers: EnhancedPasteHandlers, timeoutMs = PASTE_READ_TIMEOUT_MS) {
+	constructor(handlers: EnhancedPasteHandlers, readTimeoutMs: () => number = () => PASTE_READ_TIMEOUT_MS) {
 		this.#handlers = handlers;
-		this.#timeoutMs = timeoutMs;
+		this.#readTimeoutMs = readTimeoutMs;
 	}
 
 	enable(): void {
@@ -233,7 +248,7 @@ export class EnhancedPasteController {
 			timer: undefined,
 			id,
 		};
-		paste.timer = setTimeout(() => this.#endOnTimeout(paste), this.#timeoutMs);
+		paste.timer = setTimeout(() => this.#endOnTimeout(paste), clampPasteTimeoutMs(this.#readTimeoutMs()));
 		this.#active = paste;
 	}
 
