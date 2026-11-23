@@ -162,9 +162,11 @@ async function createHarness() {
 	}
 
 	/** Wait for the chip to reach the buffer, failing rather than hanging if it never does. The
-	 *  insert writes a file, so it needs macrotask turns, not just microtasks. */
+	 *  insert writes a file, so it needs macrotask turns, not just microtasks. The bound is a wall
+	 *  clock, not a turn count: the base commit needs about 108 turns and a loaded host more. */
 	async function chipLanded(): Promise<void> {
-		for (let i = 0; i < 200 && editor.pendingImages.length === 0; i++) {
+		const deadline = Date.now() + 10_000;
+		while (editor.pendingImages.length === 0 && Date.now() < deadline) {
 			await new Promise(resolve => setImmediate(resolve));
 		}
 		expect(editor.pendingImages).toHaveLength(1);
