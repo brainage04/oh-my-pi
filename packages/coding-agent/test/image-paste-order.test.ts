@@ -173,8 +173,9 @@ async function createHarness() {
 	 *  insert writes a file, so it needs macrotask turns, not just microtasks. The bound is a wall
 	 *  clock, not a turn count: the base commit needs about 108 turns and a loaded host more. */
 	async function chipLanded(): Promise<void> {
-		const deadline = Date.now() + 10_000;
-		while (editor.pendingImages.length === 0 && Date.now() < deadline) {
+		// A turn cap, not a clock: `vi.useFakeTimers()` fakes `Date.now` and `performance.now`, so a
+		// wall-clock bound would never expire and the loop would spin instead of failing.
+		for (let i = 0; i < 5_000 && editor.pendingImages.length === 0; i++) {
 			await new Promise(resolve => setImmediate(resolve));
 		}
 		expect(editor.pendingImages).toHaveLength(1);
