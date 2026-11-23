@@ -55,7 +55,6 @@ type FakeEditor = {
 	handleInput?(data: string): void;
 	imageLinks?: (string | undefined)[];
 	insertAtom(label: string, expansion: string): void;
-	holdPaste(): () => void;
 	pendingImages: ImageContent[];
 	pendingImageLinks: (string | undefined)[];
 	clearDraft(historyText?: string): void;
@@ -168,7 +167,6 @@ async function createContext() {
 		clearCustomKeyHandlers,
 		spaceHold: new SpaceHoldGesture(() => {}),
 		insertAtom: vi.fn(),
-		holdPaste: () => () => {},
 		pendingImages: [],
 		pendingImageLinks: [],
 		clearDraft(historyText?: string) {

@@ -1055,20 +1055,23 @@ export class InputController {
 				if (!this.#clipboardIsTerminalLocal()) return false;
 				// Same hold as the packet path: this read is async too, and the editor's own
 				// counter only sees the Ctrl+V route.
-				const release = this.#composerTakesPaste(this.ctx.ui.getFocused())
-					? this.ctx.editor.holdPaste()
-					: undefined;
-				void this.handleImagePaste().finally(() => release?.());
+				const release = this.#holdComposerInput();
+				void this.handleImagePaste().finally(() => release());
 				return true;
 			},
 			// The packets arrive through a TUI input listener, so the composer's own paste
 			// counter never sees this paste; hold it here or a fast typist's next character
 			// lands before the image chip. A focused prompt orders its own pastes.
-			holdInput: () =>
-				this.#composerTakesPaste(this.ctx.ui.getFocused()) ? this.ctx.editor.holdPaste() : () => {},
+			holdInput: () => this.#holdComposerInput(),
 		});
 		this.ctx.ui.addInputListener(data => (this.#enhancedPaste?.handleInput(data) ? { consume: true } : undefined));
 		this.ctx.ui.addStartListener(() => this.#enhancedPaste?.enable());
+	}
+
+	/** Hold the composer's keystrokes behind an async paste; a no-op when a dialog owns focus. */
+	#holdComposerInput(): () => void {
+		if (!this.#composerTakesPaste(this.ctx.ui.getFocused())) return () => {};
+		return this.ctx.editor.holdPaste?.() ?? (() => {});
 	}
 
 	/** Enforce the deleted-chip contract at submit time: images whose inline token was removed
