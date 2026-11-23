@@ -1466,8 +1466,9 @@ describe("InputController image paste into an image-accepting prompt", () => {
 			const mime = owns ? "text/html" : "text/plain";
 
 			offerTextAndHtml(listeners);
+			// The read carries an `id` the terminal echoes, so a late answer is recognisable.
 			expect(
-				written.mock.calls.some(([data]) => data.includes(`;${base64(mime)}`)),
+				written.mock.calls.some(([data]) => data.includes(`type=read:id=omp-1;${base64(mime)}`)),
 				`requests ${mime}`,
 			).toBe(true);
 
