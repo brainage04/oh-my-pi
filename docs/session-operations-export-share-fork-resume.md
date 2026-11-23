@@ -481,12 +481,18 @@ a revived agent's turn the lifecycle teardown disposes.
 
 1. **Subagents first.** Every persisted subagent transcript under the session
    (`<session>/<AgentId>.jsonl`, nested ones included) that its process left
-   mid-turn, that was not killed (no tombstone) and that a cold revive can rebuild
-   (a `session_init` contract, not isolated) runs one more monitored turn as a
+   mid-turn, that was not killed (no tombstone), whose run did not already deliver
+   a terminal result to its parent, and that a cold revive can rebuild (a
+   `session_init` contract, not isolated) runs one more monitored turn as a
    background job of its parent, under the subagent's id. The lifecycle reviver
    rebuilds it from its transcript, the turn goes on as below, and the parent
    receives the result as the job's ordinary `async-result`, so a parent waiting on
-   that job finds it again.
+   that job finds it again. A kept-alive subagent is disposed with its final turn
+   unappended, so its own transcript still ends mid-turn; the parent's
+   `async-result` delivery carries the job's terminal status (`completed`, `failed`,
+   `cancelled`), and a child that wrote nothing after that delivery is not
+   relaunched. A child that woke again afterwards has a newer transcript entry and
+   is restored.
 2. **Then the session's own turn** (`AgentSession.restoreInterruptedTurn`). A turn
    cut off without a `session_exit` record (a crash, SIGKILL or power loss records
    none) is first closed the way exit recovery closes one whose exit was recorded:
