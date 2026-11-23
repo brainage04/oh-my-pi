@@ -5,7 +5,7 @@
  * register the clipboard read with `CustomEditor`'s in-flight paste counter, so
  * later keystrokes queue behind it. The OSC 5522 enhanced-paste path (kitty,
  * Tern) reaches the composer through a TUI input listener instead, and that
- * listener never told the editor a paste was running — so a fast typist's next
+ * listener never told the editor a paste was running, so a fast typist's next
  * character was inserted at the cursor while the clipboard read was still
  * resolving, and the image chip landed after it.
  */
