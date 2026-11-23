@@ -283,7 +283,6 @@ export class EnhancedPasteController {
 			});
 		} finally {
 			paste.release();
-			paste.release = () => {};
 		}
 	}
 
