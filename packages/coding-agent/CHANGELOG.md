@@ -107,6 +107,7 @@
 - Provider error logs now include the request ID needed for troubleshooting Anthropic refusals.
 - Sessions started from collaboration prompts now receive automatic titles.
 - Fixed `/tan` forks ending an idle wait prematurely when their assignment remains blocked.
+- A character typed right after pasting a screenshot into the prompt now lands after the image instead of before it, and a second paste during the first one keeps both images.
 
 ## [19.1.0] - 2026-11-21
 
