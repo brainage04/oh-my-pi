@@ -418,13 +418,97 @@ describe("image paste ordering in the composer", () => {
 					};
 				},
 			},
-			1_000,
+			() => 1_000,
 		);
 		try {
 			for (const input of LISTING) controller.handleInput(input);
 			vi.advanceTimersByTime(1_001);
 
 			expect(log).toEqual(["status:Clipboard paste timed out"]);
+			expect(held).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("falls back to the default deadline for a value setTimeout cannot use", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		let held = 0;
+		const handlers = {
+			write: () => {},
+			pasteText: () => log.push("text"),
+			pasteImage: () => {
+				log.push("image");
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: (message: string) => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => {
+				held++;
+				return () => {
+					held--;
+				};
+			},
+		};
+		try {
+			// 0, a negative, NaN, Infinity and 2^31 all make setTimeout fire on the next tick, which
+			// would drop every paste. Each must fall back to the default instead.
+			for (const value of [0, -1, -5000, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+				log.length = 0;
+				const controller = new EnhancedPasteController(handlers, () => value);
+				for (const input of LISTING) controller.handleInput(input);
+				vi.advanceTimersByTime(1);
+				expect(log, `value ${value} must not fire at once`).toEqual([]);
+				expect(held, `value ${value} keeps its hold`).toBe(1);
+
+				vi.advanceTimersByTime(PASTE_READ_TIMEOUT_MS);
+				expect(log, `value ${value} falls back to the default`).toEqual(["status:Clipboard paste timed out"]);
+				expect(held).toBe(0);
+			}
+
+			// A fraction is truncated, not rejected: 1.5 ms becomes the 1 ms floor.
+			log.length = 0;
+			const fractional = new EnhancedPasteController(handlers, () => 1.5);
+			for (const input of LISTING) fractional.handleInput(input);
+			vi.advanceTimersByTime(1);
+			expect(log).toEqual(["status:Clipboard paste timed out"]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("lands a paste from a terminal that does not echo the read id", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		let held = 0;
+		const controller = new EnhancedPasteController({
+			write: () => {},
+			pasteText: () => log.push("text"),
+			pasteImage: image => {
+				log.push(`image:${Buffer.from(image.data, "base64").toString("utf8")}`);
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: message => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => {
+				held++;
+				return () => {
+					held--;
+				};
+			},
+		});
+		try {
+			// A terminal that ignores the `id` answers without it, which must not drop the paste.
+			for (const input of LISTING) controller.handleInput(input);
+			for (const input of imageBodyFor("", "A").map(input => input.replace(/:id=/g, ":unused="))) {
+				controller.handleInput(input);
+			}
+			for (let i = 0; i < 50; i++) await Promise.resolve();
+
+			expect(log).toEqual(["image:A"]);
 			expect(held).toBe(0);
 		} finally {
 			vi.useRealTimers();
