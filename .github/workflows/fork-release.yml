@@ -166,7 +166,10 @@ jobs:
              name: omp-binary-${{ env.TARGET_ID }}
              path: packages/coding-agent/binaries
 
-        # Dependency-free build (bun APIs + zip only), so no `bun install` here.
+        # The relay extension bundles React and the collab web package, so the
+        # build needs the workspace's dependencies installed first.
+        - run: bun install --frozen-lockfile
+
         - name: Build browser relay extension
           run: bun run --cwd packages/browser-relay build
 
