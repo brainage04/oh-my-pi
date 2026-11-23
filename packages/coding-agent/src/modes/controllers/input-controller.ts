@@ -87,6 +87,7 @@ import { cfgCycleOrder } from "../../config/model-settings";
 import {
 	cfgBareExitOnEmptySession,
 	cfgBareSlashCommands,
+	cfgClipboardPasteTimeoutMs,
 	cfgDisplayHideToolActivity,
 	cfgDoubleEscapeAction,
 	cfgEmojiAutocomplete,
@@ -1039,29 +1040,34 @@ export class InputController {
 	#setupEnhancedPaste(): void {
 		if (this.#enhancedPaste) return;
 
-		this.#enhancedPaste = new EnhancedPasteController({
-			write: data => this.ctx.ui.terminal.write(data),
-			pasteText: text => this.#pasteTextIntoFocus(text),
-			pasteImage: image =>
-				this.#pasteImageIntoFocus(sink => sink.attach(image, `Unsupported pasted image format: ${image.mimeType}`)),
-			// Styled text goes where images do: the composer, or a prompt that takes them.
-			acceptsHtml: () => {
-				const focused = this.ctx.ui.getFocused();
-				return this.#composerTakesPaste(focused) || (hasPasteText(focused) && focused.acceptsImages === true);
+		this.#enhancedPaste = new EnhancedPasteController(
+			{
+				write: data => this.ctx.ui.terminal.write(data),
+				pasteText: text => this.#pasteTextIntoFocus(text),
+				pasteImage: image =>
+					this.#pasteImageIntoFocus(sink =>
+						sink.attach(image, `Unsupported pasted image format: ${image.mimeType}`),
+					),
+				// Styled text goes where images do: the composer, or a prompt that takes them.
+				acceptsHtml: () => {
+					const focused = this.ctx.ui.getFocused();
+					return this.#composerTakesPaste(focused) || (hasPasteText(focused) && focused.acceptsImages === true);
+				},
+				pasteHtml: html => this.#pasteHtml(html),
+				showStatus: message => this.ctx.showStatus(message),
+				pasteNative: () => {
+					if (!this.#clipboardIsTerminalLocal()) return false;
+					// The image branch of `handleImagePaste` awaits a blob write and an image probe, so
+					// it needs the same hold. Its text branch queues a bracketed paste behind this hold;
+					// the queue is FIFO, so the text drains after anything attached before it.
+					const release = this.#holdComposerInput();
+					void this.handleImagePaste().finally(() => release());
+					return true;
+				},
+				holdInput: () => this.#holdComposerInput(),
 			},
-			pasteHtml: html => this.#pasteHtml(html),
-			showStatus: message => this.ctx.showStatus(message),
-			pasteNative: () => {
-				if (!this.#clipboardIsTerminalLocal()) return false;
-				// The image branch of `handleImagePaste` awaits a blob write and an image probe, so
-				// it needs the same hold. Its text branch queues a bracketed paste behind this hold;
-				// the queue is FIFO, so the text drains after anything attached before it.
-				const release = this.#holdComposerInput();
-				void this.handleImagePaste().finally(() => release());
-				return true;
-			},
-			holdInput: () => this.#holdComposerInput(),
-		});
+			isSettingsInitialized() ? cfgClipboardPasteTimeoutMs.get(settings) : undefined,
+		);
 		this.ctx.ui.addInputListener(data => (this.#enhancedPaste?.handleInput(data) ? { consume: true } : undefined));
 		this.ctx.ui.addStartListener(() => this.#enhancedPaste?.enable());
 	}

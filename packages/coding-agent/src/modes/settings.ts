@@ -337,6 +337,14 @@ export const cfgImagesBlockImages = register({
 	},
 });
 
+export const cfgClipboardPasteTimeoutMs = register({
+	id: "clipboard.pasteTimeoutMs",
+	type: "number",
+	default: 5000,
+	description:
+		"How long a terminal gets to answer a clipboard read before the paste is dropped (default 5000 ms). Raise it on a slow remote link.",
+});
+
 export const cfgTuiMaxInlineImageColumns = register({
 	id: "tui.maxInlineImageColumns",
 	type: "number",
