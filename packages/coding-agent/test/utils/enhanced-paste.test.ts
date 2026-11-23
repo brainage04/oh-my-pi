@@ -46,7 +46,10 @@ describe("EnhancedPasteController", () => {
 		controller.handleInput(packet("type=read:status=DONE"));
 
 		const pasteEventName = Buffer.from("Paste event", "utf8").toString("base64");
-		expect(writes.at(-1)).toBe(`${OSC}type=read:pw=${password}:name=${pasteEventName}:mime=${imageMime}${BEL}`);
+		// The read carries an `id` the terminal echoes, so a late answer is recognisable.
+		expect(writes.at(-1)).toBe(
+			`${OSC}type=read:id=omp-1:pw=${password}:name=${pasteEventName}:mime=${imageMime}${BEL}`,
+		);
 
 		controller.handleInput(packet("type=read:status=OK"));
 		controller.handleInput(
@@ -90,7 +93,7 @@ describe("EnhancedPasteController", () => {
 		controller.handleInput(packet("type=read:status=DONE"));
 
 		expect(writes).toEqual([
-			`${OSC}type=read:loc=primary:pw=${password}:name=${pasteEventName}:mime=${textMime}${BEL}`,
+			`${OSC}type=read:id=omp-1:loc=primary:pw=${password}:name=${pasteEventName}:mime=${textMime}${BEL}`,
 		]);
 
 		controller.handleInput(packet("type=read:status=OK"));
@@ -197,7 +200,7 @@ describe("EnhancedPasteController", () => {
 		);
 		controller.handleInput(packet(`type=read:status=DONE:pw=${password}`));
 
-		expect(writes.at(-1)).toBe(`${OSC}type=read:pw=${password}:name=${pasteEventName};${textMime}${BEL}`);
+		expect(writes.at(-1)).toBe(`${OSC}type=read:id=omp-1:pw=${password}:name=${pasteEventName};${textMime}${BEL}`);
 
 		controller.handleInput(packet("type=read:status=OK"));
 		controller.handleInput(
@@ -237,7 +240,7 @@ describe("EnhancedPasteController", () => {
 		);
 		controller.handleInput(packet("type=read:status=DONE"));
 
-		expect(writes.at(-1)).toBe(`${OSC}type=read;${imageMime}${BEL}`);
+		expect(writes.at(-1)).toBe(`${OSC}type=read:id=omp-1;${imageMime}${BEL}`);
 	});
 
 	it("reads HTML over plain text only where styled text goes", () => {
@@ -265,7 +268,7 @@ describe("EnhancedPasteController", () => {
 			controller.handleInput(packet(`type=read:status=DATA:mime=${dot}`, listing));
 			controller.handleInput(packet("type=read:status=DONE"));
 			const mime = composer ? htmlMime : textMime;
-			expect(writes.at(-1)).toBe(`${OSC}type=read;${mime}${BEL}`);
+			expect(writes.at(-1)).toBe(`${OSC}type=read:id=omp-1;${mime}${BEL}`);
 
 			const body = composer ? "<b>hi</b>" : "hi";
 			controller.handleInput(packet("type=read:status=OK"));
