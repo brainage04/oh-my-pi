@@ -17,14 +17,15 @@ import { CustomEditor } from "@oh-my-pi/pi-tui/prompt/custom-editor";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { getEditorTheme } from "@oh-my-pi/pi-tui/theme/tui-adapters";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { EnhancedPasteController } from "@oh-my-pi/pi-coding-agent/utils/enhanced-paste";
 import { InputController } from "@oh-my-pi/pi-coding-agent/modes/controllers/input-controller";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { beginSettingsTest, restoreSettingsTestState, type SettingsTestState } from "./helpers/settings-test-state";
 
-/** Mirrors `PASTE_HOLD_TIMEOUT_MS` in `utils/enhanced-paste.ts`. */
-const PASTE_HOLD_TIMEOUT_MS = 5000;
+/** Longer than any read deadline the controller could use, so the test never mirrors the constant. */
+const PAST_ANY_DEADLINE_MS = 60_000;
 
 const TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD3sAAAAASUVORK5CYII=";
 
@@ -146,14 +147,6 @@ async function createHarness() {
 		showAgentHub: vi.fn(),
 	} as unknown as InteractiveModeContext;
 
-	// The chip lands through `insertAtom`; its call is the paste's completion signal.
-	const chipInserted = Promise.withResolvers<void>();
-	const insertAtom = editor.insertAtom.bind(editor);
-	editor.insertAtom = (label: string, expansion: string) => {
-		insertAtom(label, expansion);
-		chipInserted.resolve();
-	};
-
 	const controller = new InputController(ctx, {
 		readImage: async () => ({ data: Buffer.from(TINY_PNG, "base64"), mimeType: "image/png" }),
 		readText: async () => "",
@@ -171,7 +164,16 @@ async function createHarness() {
 		editor.handleInput(data);
 	}
 
-	return { editor, send, showStatus, tempDir, chipInserted: chipInserted.promise };
+	/** Wait for the chip to reach the buffer, failing rather than hanging if it never does. The
+	 *  insert writes a file, so it needs macrotask turns, not just microtasks. */
+	async function chipLanded(): Promise<void> {
+		for (let i = 0; i < 200 && editor.pendingImages.length === 0; i++) {
+			await new Promise(resolve => setImmediate(resolve));
+		}
+		expect(editor.pendingImages).toHaveLength(1);
+	}
+
+	return { editor, send, showStatus, tempDir, chipLanded };
 }
 
 describe("image paste ordering in the composer", () => {
@@ -192,14 +194,14 @@ describe("image paste ordering in the composer", () => {
 	});
 
 	it("keeps a character typed during an OSC 5522 image paste after the image", async () => {
-		const { editor, send, tempDir, chipInserted } = await createHarness();
+		const { editor, send, tempDir, chipLanded } = await createHarness();
 		try {
 			for (const input of LISTING) send(input);
 			for (const input of IMAGE_BODY) send(input);
 			// The user keeps typing while the clipboard bytes are still being
 			// normalized, persisted and measured.
 			send("x");
-			await chipInserted;
+			await chipLanded();
 			// The hold releases once the paste handler returns, and the queued key drains then.
 			for (let i = 0; i < 10; i++) await Promise.resolve();
 
@@ -230,6 +232,111 @@ describe("image paste ordering in the composer", () => {
 		}
 	});
 
+	it("keeps a second paste that arrives while the first insert is still running", async () => {
+		const log: string[] = [];
+		const insert = Promise.withResolvers<void>();
+		let held = 0;
+		const controller = new EnhancedPasteController({
+			write: () => {},
+			pasteText: () => log.push("text"),
+			pasteImage: async () => {
+				log.push("image");
+				await insert.promise;
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: message => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => {
+				held++;
+				return () => {
+					held--;
+				};
+			},
+		});
+
+		for (const input of LISTING) controller.handleInput(input);
+		for (const input of IMAGE_BODY) controller.handleInput(input);
+		// The first insert is still running when the second paste's read is under way.
+		for (const input of LISTING) controller.handleInput(input);
+		for (const input of IMAGE_BODY.slice(0, 2)) controller.handleInput(input);
+		insert.resolve();
+		for (let i = 0; i < 50; i++) await Promise.resolve();
+		// The second read finishes after the first insert settled.
+		controller.handleInput(IMAGE_BODY[2]!);
+		for (let i = 0; i < 50; i++) await Promise.resolve();
+
+		expect(log).toEqual(["image", "image"]);
+		expect(held).toBe(0);
+	});
+
+	it("keeps the hold through a slow insert instead of timing out mid-paste", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		const insert = Promise.withResolvers<void>();
+		let held = 0;
+		const controller = new EnhancedPasteController({
+			write: () => {},
+			pasteText: () => log.push("text"),
+			pasteImage: async () => {
+				log.push("image");
+				await insert.promise;
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: message => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => {
+				held++;
+				return () => {
+					held--;
+				};
+			},
+		});
+		try {
+			for (const input of LISTING) controller.handleInput(input);
+			for (const input of IMAGE_BODY) controller.handleInput(input);
+			// The insert is still running when the read deadline would have expired.
+			vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS);
+			expect(held).toBe(1);
+
+			insert.resolve();
+			for (let i = 0; i < 50; i++) await Promise.resolve();
+
+			expect(log).toEqual(["image"]);
+			expect(held).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("still delivers an image whose read answers after the deadline", async () => {
+		vi.useFakeTimers();
+		const log: string[] = [];
+		const controller = new EnhancedPasteController({
+			write: () => {},
+			pasteText: () => log.push("text"),
+			pasteImage: () => {
+				log.push("image");
+			},
+			acceptsHtml: () => false,
+			pasteHtml: () => {},
+			showStatus: message => log.push(`status:${message}`),
+			pasteNative: () => false,
+			holdInput: () => () => {},
+		});
+		try {
+			for (const input of LISTING) controller.handleInput(input);
+			vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS);
+			for (const input of IMAGE_BODY) controller.handleInput(input);
+			for (let i = 0; i < 50; i++) await Promise.resolve();
+
+			expect(log).toEqual(["image"]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("resumes typing when the terminal never answers the read request", async () => {
 		vi.useFakeTimers();
 		const { editor, send, showStatus, tempDir } = await createHarness();
@@ -241,10 +348,10 @@ describe("image paste ordering in the composer", () => {
 			send("x");
 			expect(editor.getText()).toBe("");
 
-			vi.advanceTimersByTime(PASTE_HOLD_TIMEOUT_MS + 1);
+			vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS);
 
 			expect(editor.getText()).toBe("x");
-			expect(showStatus).toHaveBeenCalledWith("Clipboard paste timed out");
+			expect(showStatus).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 			await tempDir.remove();
