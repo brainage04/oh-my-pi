@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `clipboard.pasteTimeoutMs` sets how long a terminal gets to answer a clipboard read before the paste is dropped (default 5000 ms), for a slow remote link.
+
 ### Fixed
 
 - A character typed right after pasting a screenshot into the prompt now lands after the image instead of before it, and a second paste during the first one keeps both images.
