@@ -7,6 +7,7 @@
 - A failed turn no longer rewrites the whole session file when it is dropped, so long sessions stop stalling and wearing the disk after provider errors.
 - `omp --restore` and `omp --resume` of a session file stored under a named profile's root now activate that profile instead of the default one, and refuse a `--profile` that names a different profile instead of opening the file with the wrong credentials. The exit and `[Recovery]` hints name the session's profile.
 - `omp --restore` no longer relaunches a subagent whose run already delivered a terminal result to its parent: only subagents whose turn the stopping process cut off go on.
+- A session past the provider's image limit no longer rewrites the whole prompt cache on every new image: the oldest images are dropped a quarter of the limit at a time, so the cached prefix changes once per step ([#15230](https://github.com/can1357/oh-my-pi/issues/15230))
 
 ## [19.1.1] - 2026-11-23
 
