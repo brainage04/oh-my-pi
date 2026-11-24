@@ -10,13 +10,13 @@ name: Fork release
 # because the fork exists to carry a handful of TypeScript patches for Thomas's
 # hosts, and every one of them is platform-independent.
 #
-# Tag format: `v<upstream version>-bp.<n>`, e.g. `v19.1.0-bp.1`.
+# Tag format: `v<upstream version>-bp.<n>`, e.g. `v19.1.1-bp.1`.
 
 on:
   workflow_dispatch:
      inputs:
         tag:
-           description: "Tag to build and release, e.g. v19.1.0-bp.1. If it does not exist yet, it is created at the commit this run builds."
+           description: "Tag to build and release, e.g. v19.1.1-bp.1. If it does not exist yet, it is created at the commit this run builds."
            required: true
            type: string
   push:
