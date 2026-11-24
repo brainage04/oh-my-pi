@@ -137,6 +137,21 @@ function needsImageDrop(state: ImageBudgetState): boolean {
 	return state.remainingDrops > 0 || state.inlineBytes > state.byteBudget;
 }
 
+/**
+ * Count evictions advance in steps of `1 / EVICTION_STEP_DIVISOR` of the budget. The clamp is stateless, runs on every
+ * request and drops the oldest images, so dropping exactly the excess would move the eviction boundary one image later
+ * on every new image: a message deep in the warm prefix changes each time, the provider writes its whole prompt cache
+ * again, and prefix-bound thinking is discarded (#15230). Rounding the excess up to a step keeps the dropped prefix
+ * byte-identical until the excess crosses the next step.
+ */
+const EVICTION_STEP_DIVISOR = 4;
+
+/** Rounds a positive `excess` over `budget` up to the next eviction step. */
+function quantizeEviction(excess: number, budget: number): number {
+	const step = Math.max(1, Math.ceil(budget / EVICTION_STEP_DIVISOR));
+	return Math.ceil(excess / step) * step;
+}
+
 function clampContent(
 	content: readonly (TextContent | ImageContent)[],
 	state: ImageBudgetState,
@@ -240,16 +255,17 @@ function clampImages(context: Context, state: ImageBudgetState): Context {
  *
  * {@link countImages} counts exactly the roles {@link clampImages} can drop, so the
  * budget is always fully spendable and the clamp never evicts an input image
- * on behalf of a model output.
+ * on behalf of a model output. The drop count is rounded up to an eviction
+ * step ({@link quantizeEviction}) so a new image does not shift the cached prefix.
  */
 export function clampProviderContextImages(context: Context, model: Model): Context {
 	if (!model.input.includes("image")) return context;
 	const metadataWire = sendsComputerScreenshotMetadata(model);
-	const totalImages = countImages(context, metadataWire);
-	const remainingDrops = totalImages - providerImageBudget(model);
-	if (remainingDrops <= 0) return context;
+	const budget = providerImageBudget(model);
+	const excess = countImages(context, metadataWire) - budget;
+	if (excess <= 0) return context;
 	return clampImages(context, {
-		remainingDrops,
+		remainingDrops: quantizeEviction(excess, budget),
 		inlineBytes: 0,
 		byteBudget: Number.POSITIVE_INFINITY,
 		model,
