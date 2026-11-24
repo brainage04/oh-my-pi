@@ -60,7 +60,7 @@ export async function restoreSession(session: AgentSession, options: RestoreOpti
 /**
  * Statuses a delivered `async-result` can carry when the run ended. `cancelled`
  * is absent because a cancelled job never delivers one
- * (`job-manager.ts:640-657` sets its result text and returns, and the catch arm
+ * (`job-manager.ts:656-673` sets its result text and returns, and the catch arm
  * enqueues only when the status is not `cancelled`), so no journal holds it.
  */
 const TERMINAL_JOB_STATUSES: Readonly<Record<string, true>> = { completed: true, failed: true };
@@ -86,8 +86,8 @@ function jobStatusOf(job: unknown): { agentId?: string; terminal: boolean } | un
  * power loss) leaves a transcript that still ends mid-turn, so
  * {@link hasRestorableTurn} reads it as interrupted. A clean dispose is not that
  * case: parking a kept-alive subagent disposes it (`agent-lifecycle.ts:449`),
- * which appends a `session_exit` of kind `normal` (`agent-session.ts:7201`,
- * `:4222-4224`), and `hasRestorableTurn` refuses that (`exit-diagnostics.ts:193`).
+ * which appends a `session_exit` of kind `normal` (`agent-session.ts:7234`,
+ * `:4233-4235`), and `hasRestorableTurn` refuses that (`exit-diagnostics.ts:249`).
  * The parent's delivery is the only record that such a run ended. A child that
  * woke again afterward has a newer transcript entry, and {@link restoreSubagents}
  * keeps restoring it.
