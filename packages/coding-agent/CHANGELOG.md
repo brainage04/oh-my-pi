@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A session past the provider's image limit no longer rewrites the whole prompt cache on every new image: the oldest images are dropped a quarter of the limit at a time, so the cached prefix changes once per step ([#15230](https://github.com/can1357/oh-my-pi/issues/15230))
+
 ## [19.1.1] - 2026-11-23
 
 ### Breaking Changes
