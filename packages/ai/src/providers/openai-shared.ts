@@ -1,6 +1,9 @@
 import { toClinePassWireModelId } from "@oh-my-pi/pi-catalog/cline-pass-model-id";
+import { revisionAtLeast } from "@oh-my-pi/pi-catalog/compat/revision";
+import { classifyModel } from "@oh-my-pi/pi-catalog/compat/taxonomy";
 import type { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { toFirepassWireModelId, toFireworksWireModelId } from "@oh-my-pi/pi-catalog/fireworks-model-id";
+import { modelMatchesHost } from "@oh-my-pi/pi-catalog/hosts";
 import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
 import { calculateCost } from "@oh-my-pi/pi-catalog/models";
 import type {
@@ -875,7 +878,7 @@ export type OpenAICompletionsParams = Omit<ChatCompletionCreateParamsStreaming, 
 	top_k?: number;
 	min_p?: number;
 	repetition_penalty?: number;
-	thinking?: { type: "enabled" | "disabled"; effort?: string; keep?: "all" };
+	thinking?: { type: "enabled" | "disabled"; effort?: string; keep?: "all"; clear_thinking?: false };
 	enable_thinking?: boolean;
 	preserve_thinking?: boolean;
 	chat_template_kwargs?: {
@@ -1308,6 +1311,9 @@ export function applyChatCompletionsReasoningParams(
 		hasTools: options?.hasTools,
 	});
 	applyChatCompletionsCompatPolicy(params, policy);
+	if (params.thinking?.type === "enabled" && keepsZaiPreservedThinking(model, compat)) {
+		params.thinking.clear_thinking = false;
+	}
 	if (
 		model.provider !== "cline-pass" ||
 		!policy.reasoning.enabled ||
@@ -1339,6 +1345,20 @@ export function disableChatCompletionsReasoningForDialect(
  */
 function isZaiReasoningEffortDialect(_model: Model<"openai-completions">, compat: ResolvedOpenAICompat): boolean {
 	return compat.thinkingFormat === "zai" && compat.zaiReasoningEffortDialect;
+}
+
+/**
+ * Z.ai clears earlier assistant reasoning unless the request sets
+ * `thinking.clear_thinking: false` (docs.z.ai/guides/capabilities/thinking-mode, "Preserved thinking": the
+ * standard API endpoint clears it by default before GLM-5.4, the Coding Plan endpoint already keeps it). Only GLM
+ * 4.7 and later take the switch. Other models on a zai-format host (Moonshot Kimi, Xiaomi MiMo) never see the
+ * field, and a GLM behind a gateway (OpenCode Go, OpenRouter) keeps whatever that gateway forwards.
+ */
+function keepsZaiPreservedThinking(model: Model<"openai-completions">, compat: ResolvedOpenAICompat): boolean {
+	if (compat.thinkingFormat !== "zai") return false;
+	if (!modelMatchesHost(model, "zai") && !modelMatchesHost(model, "zhipu")) return false;
+	const identity = classifyModel(model.provider, model.id, { lenient: true });
+	return identity.class === "glm" && revisionAtLeast(identity.revision, "4.7");
 }
 
 /**
