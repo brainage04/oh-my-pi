@@ -555,7 +555,7 @@ function detectOpenAICompat(
 			d.isXiaomiMimo ||
 			(d.isOpenRouter && reasoningCapable),
 		requiresReasoningContentForAllAssistantTurns:
-			((isDeepseekFamily && reasoningCapable) || d.isXiaomiMimo) && !d.isOpenRouter,
+			(isDeepseekFamily && reasoningCapable) || (d.isXiaomiMimo && !d.isOpenRouter),
 		allowsSyntheticReasoningContentForToolCalls: (!isDeepseekFamily || !reasoningCapable) && !d.isXiaomiMimo,
 		// Keep the typed sparse override key present for DeepSeek proxy replay.
 		syntheticReasoningContentFallback: undefined,
@@ -791,7 +791,7 @@ function resolveOpenAIResponsesPolicy(
 		requiresReasoningContentForToolCalls:
 			(facts.is("kimi") || (isDeepseekFamily && reasoningCapable) || (isOpenRouter && reasoningCapable)) &&
 			reasoningCapable,
-		requiresReasoningContentForAllAssistantTurns: isDeepseekFamily && reasoningCapable && !isOpenRouter,
+		requiresReasoningContentForAllAssistantTurns: isDeepseekFamily && reasoningCapable,
 		allowsSyntheticReasoningContentForToolCalls: !isDeepseekFamily || !reasoningCapable,
 		syntheticReasoningContentFallback: undefined,
 		replayReasoningContent: false,

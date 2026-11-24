@@ -131,6 +131,7 @@
 - `omp --restore` no longer relaunches a subagent whose run already delivered a terminal result to its parent: only subagents whose turn the stopping process cut off go on.
 - A session past the provider's image limit no longer rewrites the whole prompt cache on every new image: the oldest images are dropped a quarter of the limit at a time, so the cached prefix changes once per step ([#15230](https://github.com/can1357/oh-my-pi/issues/15230))
 - GLM 4.7 and later on Z.ai and Zhipu hosts now keep their earlier reasoning in context: requests carry `thinking.clear_thinking: false`, which Z.ai's standard API endpoint needs before GLM-5.4 to stop clearing it. Other models on the same wire format and GLM behind a gateway such as OpenCode Go are unchanged.
+- DeepSeek reasoning models reached through OpenRouter now carry the reasoning of every earlier assistant turn when a request is rebuilt from history (after a model or host switch), as DeepSeek's own API requires, instead of only the tool-call turns. A turn that kept no reasoning is sent an empty `reasoning_content` on the chat route. The bundled OpenRouter DeepSeek rows carry the change.
 
 ## [19.1.1] - 2026-11-23
 
