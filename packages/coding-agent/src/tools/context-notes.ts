@@ -42,14 +42,21 @@ export interface NewContextToolDetails {
 
 type ExperimentalContextSessionManager = NonNullable<ToolSession["sessionManager"]>;
 
-function resolveExperimentalContextSession(session: ToolSession): ExperimentalContextSessionManager | undefined {
-	if (cfgCompactionExperimentalContextManagement.get(session.settings) !== true || session.isDisposed?.()) {
-		return undefined;
-	}
+/**
+ * The session's own journal, whatever the experimental flag says. The identity comparison
+ * prevents advisor tools from resolving the parent agent's history.
+ */
+export function resolveOwnedSessionManager(session: ToolSession): ExperimentalContextSessionManager | undefined {
+	if (session.isDisposed?.()) return undefined;
 	const manager = session.sessionManager;
 	const ownerId = session.getSessionId?.();
 	if (!manager || !ownerId || manager.getSessionId?.() !== ownerId) return undefined;
 	return manager;
+}
+
+function resolveExperimentalContextSession(session: ToolSession): ExperimentalContextSessionManager | undefined {
+	if (cfgCompactionExperimentalContextManagement.get(session.settings) !== true) return undefined;
+	return resolveOwnedSessionManager(session);
 }
 
 /**

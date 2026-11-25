@@ -310,9 +310,11 @@ export interface ResolveContext {
 	 */
 	experimentalContextManagement?: boolean;
 	/**
-	 * Current live branch owned by the caller's session. `history://current/full`
-	 * uses only this callback; it never falls back to a registry entry, session
-	 * file, or on-disk transcript.
+	 * Current live branch owned by the caller's session, available whether or not
+	 * experimental context management is on (`history://current/full` checks the
+	 * flag itself). `history://current/full` and `history://current/user/<n>` use
+	 * only this callback; they never fall back to a registry entry, session file,
+	 * or on-disk transcript.
 	 */
 	getSessionBranch?: () => readonly SessionEntry[];
 	/**

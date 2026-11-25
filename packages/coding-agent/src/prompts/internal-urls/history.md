@@ -1,1 +1,1 @@
-history://<id>: read-only concise transcript (tool calls/results summarized); bare lists registered and retained on-disk agents, not persisted unregistered top-level sessions.
+history://<id>: read-only concise transcript (tool calls/results summarized); bare lists registered and retained on-disk agents, not persisted unregistered top-level sessions. history://current/user/<n>: exact text of your own n-th user message (-1 latest, 1 first), no experimental flag; `cp` it, NEVER retype it.

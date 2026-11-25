@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `history://current/user/<n>`, the exact text of one of your own user messages (`-1` is the latest), so `cp history://current/user/-1 local://brief.md` saves or forwards a long message without retyping it; it works without `compaction.experimentalContextManagement`, and the system prompt now tells agents to copy such text instead of retyping it.
+
 ## [19.2.0] - 2026-11-25
 
 ### Breaking Changes

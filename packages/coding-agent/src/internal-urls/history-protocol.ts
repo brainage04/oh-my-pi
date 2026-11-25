@@ -17,9 +17,11 @@
  * - history://<agentId> - Concise markdown transcript of that agent
  * - history://current/full - Full, caller-bound current branch history (experimental);
  *   bare history://current reads the same unless an agent is named `current`
+ * - history://current/user/<n> - Exact text of one of the caller's own user messages:
+ *   -1 is the latest, 1 the first. Needs no experimental flag.
  */
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, UserMessage } from "@oh-my-pi/pi-ai";
 import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import type { AgentRef } from "../registry/agent-registry";
 import { AgentRegistry } from "../registry/agent-registry";
@@ -75,19 +77,38 @@ interface RefLookup {
 	preferredArtifactDir?: string;
 }
 
+type CurrentRoute = { kind: "full" | "bare" } | { kind: "user"; index: number };
+
+const CURRENT_USER_PATH = /^\/user\/(-?[1-9]\d*)$/;
+
 /**
  * `full` for `history://current/full`, `bare` for `history://current` (which
- * means the same unless an agent is named `current`), undefined for any other
- * id; throws for any other `current/<path>`.
+ * means the same unless an agent is named `current`), `user` for
+ * `history://current/user/<n>`, undefined for any other id; throws for any
+ * other `current/<path>`.
  */
-function currentRoute(url: InternalUrl): "full" | "bare" | undefined {
+function currentRoute(url: InternalUrl): CurrentRoute | undefined {
 	const agentId = url.rawHost || url.hostname;
 	if (agentId.toLowerCase() !== "current") return undefined;
-	if (!url.pathname || url.pathname === "/") return "bare";
+	if (!url.pathname || url.pathname === "/") return { kind: "bare" };
+	const user = CURRENT_USER_PATH.exec(url.pathname);
+	if (user && !url.search && !url.hash) return { kind: "user", index: Number(user[1]) };
 	if (url.pathname !== "/full" || url.search || url.hash) {
-		throw new Error("Invalid history://current route; use exactly history://current/full (selectors may follow it)");
+		throw new Error(
+			"Invalid history://current route; use history://current/full (selectors may follow it) or history://current/user/<n>",
+		);
 	}
-	return "full";
+	return { kind: "full" };
+}
+
+/** Text blocks of a user message, joined by newlines; images are not text. */
+function userMessageText(message: UserMessage): string {
+	if (typeof message.content === "string") return message.content;
+	const parts: string[] = [];
+	for (const block of message.content) {
+		if (block.type === "text") parts.push(block.text);
+	}
+	return parts.join("\n");
 }
 
 /** Humanize a last-activity timestamp as `Ns/Nm/Nh/Nd ago`. */
@@ -326,11 +347,11 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 	 */
 	async locate(url: InternalUrl, context?: ResolveContext): Promise<string | null> {
 		const current = currentRoute(url);
-		if (current === "full") return null;
+		if (current?.kind === "full" || current?.kind === "user") return null;
 		const agentId = url.rawHost || url.hostname;
 		if (!agentId) return null;
 		const { ref, preferredArtifactDir } = await this.#lookup(agentId, context);
-		if (!ref && current === "bare") return null;
+		if (!ref && current?.kind === "bare") return null;
 		if (ref?.sessionFile) return ref.sessionFile;
 		if (ref?.session) return null;
 		return (await this.#findOnDisk(ref?.id ?? agentId, preferredArtifactDir))?.file ?? null;
@@ -396,9 +417,36 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 			notes: ["Source: caller-bound live session branch (full, uncompacted)"],
 		};
 	}
+
+	#resolveCurrentUser(url: InternalUrl, index: number, context: ResolveContext | undefined): InternalResource {
+		const branch = context?.getSessionBranch?.();
+		if (!branch) {
+			throw new Error("history://current/user/<n> requires a bound live session branch");
+		}
+		const texts: string[] = [];
+		for (const entry of branch) {
+			if (entry.type !== "message" || entry.message.role !== "user" || entry.message.synthetic) continue;
+			texts.push(userMessageText(entry.message));
+		}
+		const content = texts[index > 0 ? index - 1 : texts.length + index];
+		if (content === undefined) {
+			throw new Error(
+				`history://current/user/${index}: this session has ${texts.length} user message${texts.length === 1 ? "" : "s"}`,
+			);
+		}
+		return {
+			url: url.href,
+			content,
+			contentType: "text/plain",
+			size: Buffer.byteLength(content, "utf-8"),
+			notes: ["Source: caller-bound live session branch (exact user message text)"],
+		};
+	}
+
 	async resolve(url: InternalUrl, context?: ResolveContext): Promise<InternalResource> {
 		const current = currentRoute(url);
-		if (current === "full") return this.#resolveCurrentFull(url, context);
+		if (current?.kind === "full") return this.#resolveCurrentFull(url, context);
+		if (current?.kind === "user") return this.#resolveCurrentUser(url, current.index, context);
 		const agentId = url.rawHost || url.hostname;
 		if (!agentId) {
 			const { visible, preferredArtifactDir } = await this.#roster(context);
@@ -413,7 +461,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 
 		const { ref, visible, preferredArtifactDir } = await this.#lookup(agentId, context);
 		// No agent is named `current`: the caller means its own session's history.
-		if (!ref && current === "bare") return this.#resolveCurrentFull(url, context);
+		if (!ref && current?.kind === "bare") return this.#resolveCurrentFull(url, context);
 		if (!ref) {
 			// Registry miss — the agent may have been unregistered or lost on resume.
 			// Serve its transcript straight from disk if the session file persists.
