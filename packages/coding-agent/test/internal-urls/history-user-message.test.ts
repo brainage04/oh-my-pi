@@ -42,13 +42,17 @@ const branch: SessionEntry[] = [
 	messageEntry("u3", { role: "user", content: "auto-continue nudge", synthetic: true }),
 ];
 
-function makeSession(managerSessionId: string): ToolSession {
+function makeSession(
+	managerSessionId: string,
+	entries: SessionEntry[] = branch,
+	sessionId = OWN_SESSION_ID,
+): ToolSession {
 	return {
 		cwd: process.cwd(),
 		hasUI: false,
 		getSessionFile: () => null,
-		getSessionId: () => OWN_SESSION_ID,
-		sessionManager: { getSessionId: () => managerSessionId, getBranch: () => branch },
+		getSessionId: () => sessionId,
+		sessionManager: { getSessionId: () => managerSessionId, getBranch: () => entries },
 		settings: Settings.isolated(),
 	} as unknown as ToolSession;
 }
@@ -84,6 +88,71 @@ describe("history://current/user/<n>", () => {
 
 	it("reads only the caller's own journal, never a manager another session owns", async () => {
 		await expect(readUrl(makeSession("parent-session"), "history://current/user/-1")).rejects.toThrow("does not own");
+	});
+
+	it("returns only the text blocks of a message, joined by newlines, and refuses a message with no text", async () => {
+		const image = { type: "image", data: "AAAA", mimeType: "image/png" };
+		const session = makeSession(OWN_SESSION_ID, [
+			messageEntry("m1", {
+				role: "user",
+				content: [image, { type: "text", text: "first block" }, { type: "text", text: "second block" }],
+			}),
+			messageEntry("m2", { role: "user", content: [image] }),
+		]);
+
+		expect(await readUrl(session, "history://current/user/1")).toBe("first block\nsecond block");
+		await expect(readUrl(session, "history://current/user/2")).rejects.toThrow("holds no text");
+	});
+
+	it("rejects an index before the first message, a malformed index, a query and a fragment", async () => {
+		const session = makeSession(OWN_SESSION_ID);
+
+		await expect(readUrl(session, "history://current/user/-3")).rejects.toThrow("2 user messages");
+		for (const url of [
+			"history://current/user/1.5",
+			"history://current/user/01",
+			"history://current/user/-0",
+			"history://current/user/-1?x=1",
+			"history://current/user/-1#top",
+			"history://current/user/-1/",
+		]) {
+			await expect(readUrl(session, url)).rejects.toThrow("Invalid history://current route");
+		}
+	});
+
+	it("still reaches messages from before a compaction", async () => {
+		const session = makeSession(OWN_SESSION_ID, [
+			messageEntry("m1", { role: "user", content: "before compaction" }),
+			{
+				type: "compaction",
+				id: "c1",
+				parentId: "m1",
+				timestamp: new Date(0).toISOString(),
+				summary: "summary of the first window",
+				firstKeptEntryId: "m2",
+				tokensBefore: 10,
+			} as unknown as SessionEntry,
+			messageEntry("m2", { role: "user", content: "after compaction" }),
+		]);
+
+		expect(await readUrl(session, "history://current/user/1")).toBe("before compaction");
+		expect(await readUrl(session, "history://current/user/-1")).toBe("after compaction");
+	});
+
+	it("gives each session its own journal", async () => {
+		const first = makeSession(
+			"session-a",
+			[messageEntry("a", { role: "user", content: "message of A" })],
+			"session-a",
+		);
+		const second = makeSession(
+			"session-b",
+			[messageEntry("b", { role: "user", content: "message of B" })],
+			"session-b",
+		);
+
+		expect(await readUrl(first, "history://current/user/-1")).toBe("message of A");
+		expect(await readUrl(second, "history://current/user/-1")).toBe("message of B");
 	});
 
 	it("copies into a file with cp, byte for byte, through the bash tool", async () => {

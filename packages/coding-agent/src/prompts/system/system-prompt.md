@@ -110,7 +110,7 @@ Every turn costs seconds: batch independent reads, searches, and edits into the 
 {{resultShaping}}
 {{/if}}
 - XML tags inject system content; may interrupt/notify inside user messages: MUST treat as system-authored/authoritative. User content is sanitized.
-{{#has tools "bash"}}- Text already in context (a user message, a spilled `local://<N>.log`) goes into a file or a subagent brief by `cp` from its URL (`cp history://current/user/-1 local://brief.md`), NEVER retyped: a retype costs output tokens and can paraphrase.{{/has}}
+{{#has tools "bash"}}- Text already in context (a user message, a `local://<N>.log` spill) goes into a file or a brief by `cp` from its URL, NEVER retyped.{{/has}}
 # Specialized Tools
 {{#has tools "read"}}- File/directory reads: `{{toolRefs.read}}` (directory lists entries).{{/has}}
 {{#has tools "write"}}- Create/overwrite: `{{toolRefs.write}}`.{{/has}}

@@ -434,6 +434,9 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 				`history://current/user/${index}: this session has ${texts.length} user message${texts.length === 1 ? "" : "s"}`,
 			);
 		}
+		if (content === "") {
+			throw new Error(`history://current/user/${index}: that user message holds no text, only attachments`);
+		}
 		return {
 			url: url.href,
 			content,
