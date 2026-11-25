@@ -12,6 +12,7 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { InternalUrlRouter, resolveLocalRoot } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import { sessionResolveContext } from "@oh-my-pi/pi-coding-agent/internal-urls/context";
 import type { SessionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
+import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { BashTool } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import { resourceText } from "../helpers/resource-text";
@@ -120,36 +121,35 @@ describe("history://current/user/<n>", () => {
 		}
 	});
 
-	it("still reaches messages from before a compaction", async () => {
-		const session = makeSession(OWN_SESSION_ID, [
-			messageEntry("m1", { role: "user", content: "before compaction" }),
-			{
-				type: "compaction",
-				id: "c1",
-				parentId: "m1",
-				timestamp: new Date(0).toISOString(),
-				summary: "summary of the first window",
-				firstKeptEntryId: "m2",
-				tokensBefore: 10,
-			} as unknown as SessionEntry,
-			messageEntry("m2", { role: "user", content: "after compaction" }),
-		]);
+	it("still reaches messages from before a compaction, which the model's own context no longer holds", async () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "before compaction", timestamp: 1 });
+		const keptId = manager.appendMessage({ role: "user", content: "kept across compaction", timestamp: 2 });
+		manager.appendCompaction("summary of the first window", undefined, keptId, 10);
+		manager.appendMessage({ role: "user", content: "after compaction", timestamp: 3 });
+		const session = {
+			...makeSession(manager.getSessionId()),
+			getSessionId: () => manager.getSessionId(),
+			sessionManager: manager,
+		} as unknown as ToolSession;
 
+		expect(JSON.stringify(manager.buildSessionContext().messages)).not.toContain("before compaction");
 		expect(await readUrl(session, "history://current/user/1")).toBe("before compaction");
 		expect(await readUrl(session, "history://current/user/-1")).toBe("after compaction");
 	});
 
 	it("gives each session its own journal", async () => {
-		const first = makeSession(
-			"session-a",
-			[messageEntry("a", { role: "user", content: "message of A" })],
-			"session-a",
-		);
-		const second = makeSession(
-			"session-b",
-			[messageEntry("b", { role: "user", content: "message of B" })],
-			"session-b",
-		);
+		const sessionFor = (text: string): ToolSession => {
+			const manager = SessionManager.inMemory();
+			manager.appendMessage({ role: "user", content: text, timestamp: 1 });
+			return {
+				...makeSession(manager.getSessionId()),
+				getSessionId: () => manager.getSessionId(),
+				sessionManager: manager,
+			} as unknown as ToolSession;
+		};
+		const first = sessionFor("message of A");
+		const second = sessionFor("message of B");
 
 		expect(await readUrl(first, "history://current/user/-1")).toBe("message of A");
 		expect(await readUrl(second, "history://current/user/-1")).toBe("message of B");

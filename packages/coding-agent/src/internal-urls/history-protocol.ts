@@ -435,7 +435,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
 			);
 		}
 		if (content === "") {
-			throw new Error(`history://current/user/${index}: that user message holds no text, only attachments`);
+			throw new Error(`history://current/user/${index}: that user message holds no text`);
 		}
 		return {
 			url: url.href,
