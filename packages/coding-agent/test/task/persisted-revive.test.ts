@@ -478,6 +478,7 @@ describe("persisted subagent revival", () => {
 		await reviver(ref);
 
 		expect(capturedOptions?.restrictToolNames).toBe(true);
+		expect(capturedOptions?.cacheWarming).toBe("streaming");
 		expect(capturedOptions?.enableMCP).toBe(false);
 		expect(capturedOptions?.enableLsp).toBe(false);
 		expect(capturedOptions?.enableIrc).toBe(false);
