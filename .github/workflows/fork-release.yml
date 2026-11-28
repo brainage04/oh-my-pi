@@ -71,6 +71,13 @@ jobs:
                echo "::error::tag says $version but packages/coding-agent/package.json says $declared"
                exit 1
              fi
+             # An existing tag must point at the commit this job builds, or the
+             # release action would attach this build's assets to another commit's tag.
+             existing="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" || true)"
+             if [ -n "$existing" ] && [ "$existing" != "$(git rev-parse HEAD)" ]; then
+               echo "::error::tag '$tag' points at $(git rev-parse --short "$existing"), but this run builds $(git rev-parse --short HEAD)"
+               exit 1
+             fi
              # The commit this job builds. A dispatch-created tag must point here,
              # not at the default branch, or the release would name a commit whose
              # binary is not the one uploaded.

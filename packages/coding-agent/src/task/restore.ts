@@ -86,8 +86,8 @@ function jobStatusOf(job: unknown): { agentId?: string; terminal: boolean } | un
  * power loss) leaves a transcript that still ends mid-turn, so
  * {@link hasRestorableTurn} reads it as interrupted. A clean dispose is not that
  * case: parking a kept-alive subagent disposes it (`agent-lifecycle.ts:449`),
- * which appends a `session_exit` of kind `normal` (`agent-session.ts:7234`,
- * `:4233-4235`), and `hasRestorableTurn` refuses that (`exit-diagnostics.ts:249`).
+ * which appends a `session_exit` of kind `normal` (`agent-session.ts:7285`,
+ * `:4283-4284`), and `hasRestorableTurn` refuses that (`exit-diagnostics.ts:249`).
  * The parent's delivery is the only record that such a run ended. A child that
  * woke again afterward has a newer transcript entry, and {@link restoreSubagents}
  * keeps restoring it.
