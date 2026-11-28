@@ -286,7 +286,7 @@ describe("an environment profile against the session's own", () => {
 
 describe("captureProfileState", () => {
 	it("puts back the profile variables a test group clears, when the run started with them set", () => {
-		const before = { OMP_PROFILE: process.env.OMP_PROFILE, PI_PROFILE: process.env.PI_PROFILE };
+		const restoreOriginal = captureProfileState();
 		try {
 			process.env.OMP_PROFILE = "inherited-omp";
 			process.env.PI_PROFILE = "inherited-pi";
@@ -300,11 +300,7 @@ describe("captureProfileState", () => {
 			expect(process.env.OMP_PROFILE).toBe("inherited-omp");
 			expect(process.env.PI_PROFILE).toBe("inherited-pi");
 		} finally {
-			setProfile(undefined);
-			for (const [key, value] of Object.entries(before)) {
-				if (value === undefined) delete process.env[key];
-				else process.env[key] = value;
-			}
+			restoreOriginal();
 		}
 	});
 });
