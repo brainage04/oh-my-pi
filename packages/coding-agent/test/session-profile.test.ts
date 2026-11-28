@@ -49,6 +49,29 @@ describe("profileFromSessionPath", () => {
 			await fs.rm(outside, { recursive: true, force: true });
 		}
 	});
+
+	it("names a profile whose root directory is itself a symlink", async () => {
+		const profilesDir = path.dirname(getProfileRootDir("work"));
+		const target = await fs.mkdtemp(path.join(os.tmpdir(), "omp-session-profile-root-"));
+		const root = path.join(profilesDir, "zz-linked-root");
+		await fs.mkdir(path.join(target, "agent", "sessions"), { recursive: true });
+		await fs.mkdir(profilesDir, { recursive: true });
+		await fs.symlink(target, root);
+		try {
+			expect(profileFromSessionPath(path.join(root, "agent", "sessions", "s.jsonl"))).toBe("zz-linked-root");
+			// A link inside that root that leaves it is still not the profile's.
+			const outside = await fs.mkdtemp(path.join(os.tmpdir(), "omp-session-profile-root-out-"));
+			await fs.symlink(outside, path.join(target, "escape"));
+			try {
+				expect(profileFromSessionPath(path.join(root, "escape", "s.jsonl"))).toBeUndefined();
+			} finally {
+				await fs.rm(outside, { recursive: true, force: true });
+			}
+		} finally {
+			await fs.rm(root, { force: true });
+			await fs.rm(target, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("chooseSessionProfile", () => {

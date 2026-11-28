@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
      inputs:
         tag:
-           description: "Tag to build and release, e.g. v19.2.1+bp.1. If it does not exist yet, it is created at the commit this run builds."
+           description: "Tag to build and release, e.g. v19.2.1+bp.1. The tag must already exist and point at the commit this run builds (dispatch from that tag)."
            required: true
            type: string
   push:
@@ -43,7 +43,6 @@ jobs:
      timeout-minutes: 90
      outputs:
         tag: ${{ steps.tag.outputs.tag }}
-        commit: ${{ steps.tag.outputs.commit }}
      steps:
         - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
           with:
@@ -71,20 +70,22 @@ jobs:
                echo "::error::tag says $version but packages/coding-agent/package.json says $declared"
                exit 1
              fi
-             # An existing tag must point at the commit this job builds, or the
-             # release action would attach this build's assets to another commit's tag.
+             # The tag must already exist and point at the commit this job builds. The release
+             # action would otherwise create it with GITHUB_TOKEN, which cannot create a tag at a
+             # commit that changes workflow files, and an existing tag on another commit would
+             # get this build's assets attached to it.
              existing="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}" || true)"
-             if [ -n "$existing" ] && [ "$existing" != "$(git rev-parse HEAD)" ]; then
+             if [ -z "$existing" ]; then
+               echo "::error::tag '$tag' does not exist; push it at the commit to release first"
+               exit 1
+             fi
+             if [ "$existing" != "$(git rev-parse HEAD)" ]; then
                echo "::error::tag '$tag' points at $(git rev-parse --short "$existing"), but this run builds $(git rev-parse --short HEAD)"
                exit 1
              fi
-             # The commit this job builds. A dispatch-created tag must point here,
-             # not at the default branch, or the release would name a commit whose
-             # binary is not the one uploaded.
              {
                echo "tag=$tag"
                echo "version=$version"
-               echo "commit=$(git rev-parse HEAD)"
              } >> "$GITHUB_OUTPUT"
              echo "building $tag (omp $version) at $(git rev-parse --short HEAD)"
 
@@ -194,10 +195,6 @@ jobs:
           uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
           with:
              tag_name: ${{ needs.build.outputs.tag }}
-             # Only used when the tag does not exist yet (a dispatch run): without
-             # it the action creates the tag at the default branch, which is
-             # upstream's commit, not the patched one this job built.
-             target_commitish: ${{ needs.build.outputs.commit }}
              name: ${{ needs.build.outputs.tag }}
              files: |
                 packages/coding-agent/binaries/omp-*

@@ -6,7 +6,7 @@ A fork of [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi) that carries a
 
 - `local/patched-<upstream version>` holds one upstream release plus the fork's patches, for example `local/patched-19.2.1`.
 - A release is tagged `v<upstream version>+bp.<n>`, for example `v19.2.1+bp.1`. `+bp.<n>` is semver build metadata, so the release compares equal to the upstream version. Releases up to `v19.1.1-bp.4` use `-bp.<n>`, which semver treats as a prerelease that sorts below upstream.
-- Each release carries `omp-linux-x64`, `omp-browser-relay-extension.zip`, `LICENSE` and `SHA256SUMS`. `.github/workflows/fork-release.yml` builds them from a `v*+bp.*` tag push or a manual dispatch.
+- Each release carries `omp-linux-x64`, `omp-browser-relay-extension.zip`, `LICENSE` and `SHA256SUMS`. `.github/workflows/fork-release.yml` builds them from a `v*+bp.*` tag push, or from a manual dispatch of a tag that already exists and points at the dispatched commit (the workflow never creates the tag: `GITHUB_TOKEN` cannot create one at a commit that changes workflow files).
 - `app-update` on Thomas's hosts picks the newest tag by upstream version, then by `<n>`, and pins it in `modules/omp-release.json` of the nixos-config repo.
 
 ## Patches carried

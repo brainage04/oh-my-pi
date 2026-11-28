@@ -664,19 +664,31 @@ export function profileFromSessionPath(sessionPath: string): string | undefined 
 	// to write), so resolve through the deepest existing ancestor: a symlinked
 	// profile directory still classifies as that profile.
 	const resolved = resolveEquivalentPath(sessionPath, { throughMissing: true });
+	const spelled = path.resolve(sessionPath);
 	for (const parent of profileParents()) {
-		const normalizedParent = normalizePathForComparison(parent);
-		const relative = relativePathWithinNormalizedRoot(normalizedParent, resolved);
-		const name = relative?.split(path.sep)[0];
-		if (!name) continue;
-		try {
-			const profile = normalizeProfileName(name);
-			if (profile) return profile;
-		} catch {
-			// A directory name that is not a legal profile name is not a profile root.
-		}
+		const direct = profileNameWithin(normalizePathForComparison(parent), resolved);
+		if (direct) return direct;
+		// A profile root that is itself a symlink resolves outside the profiles directory, so
+		// the name comes from the path as written, and counts only when the resolved path is
+		// still inside that root's real location (a link inside the root that leaves it does not).
+		const named = profileNameWithin(path.resolve(parent), spelled);
+		if (!named) continue;
+		const realRoot = normalizePathForComparison(path.join(parent, named));
+		if (relativePathWithinNormalizedRoot(realRoot, resolved) !== null) return named;
 	}
 	return undefined;
+}
+
+/** The profile named by the first directory of `candidate` below `root`, if that is a legal profile name. */
+function profileNameWithin(root: string, candidate: string): string | undefined {
+	const name = relativePathWithinNormalizedRoot(root, candidate)?.split(path.sep)[0];
+	if (!name) return undefined;
+	try {
+		return normalizeProfileName(name);
+	} catch {
+		// A directory name that is not a legal profile name is not a profile root.
+		return undefined;
+	}
 }
 
 /**

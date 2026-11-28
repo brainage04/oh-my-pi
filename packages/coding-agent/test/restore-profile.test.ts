@@ -12,22 +12,44 @@ import {
 } from "@oh-my-pi/pi-utils/dirs";
 import { runCli } from "../src/cli";
 
+/**
+ * Snapshots the process-wide profile state a test group changes (the active profile, the agent
+ * directory and the profile and config-directory environment) and returns what puts it back.
+ */
+function captureProfileState(): () => void {
+	const profile = getActiveProfile();
+	const agentDir = getAgentDir();
+	const env = {
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		OMP_PROFILE: process.env.OMP_PROFILE,
+		PI_PROFILE: process.env.PI_PROFILE,
+		PI_CONFIG_DIR: process.env.PI_CONFIG_DIR,
+	};
+	const setEnv = (key: keyof typeof env) => {
+		const value = env[key];
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	};
+	return () => {
+		setProfile(undefined);
+		setEnv("PI_CONFIG_DIR");
+		if (profile) setProfile(profile);
+		else if (env.PI_CODING_AGENT_DIR !== undefined) setAgentDir(agentDir);
+		else setProfile(undefined);
+		// `setProfile` clears the profile variables, so they go back last.
+		setEnv("OMP_PROFILE");
+		setEnv("PI_PROFILE");
+		setEnv("PI_CODING_AGENT_DIR");
+		__resetProfileSnapshotForTests();
+	};
+}
+
 describe("--restore of a profile session", () => {
 	let configDir = "";
-	let originalProfile: string | undefined;
-	let originalAgentDir: string;
-	let originalAgentDirEnv: string | undefined;
-	let originalOmpProfileEnv: string | undefined;
-	let originalPiProfileEnv: string | undefined;
-	let originalConfigDir: string | undefined;
+	let restoreProfileState: () => void;
 
 	beforeEach(() => {
-		originalProfile = getActiveProfile();
-		originalAgentDir = getAgentDir();
-		originalAgentDirEnv = process.env.PI_CODING_AGENT_DIR;
-		originalOmpProfileEnv = process.env.OMP_PROFILE;
-		originalPiProfileEnv = process.env.PI_PROFILE;
-		originalConfigDir = process.env.PI_CONFIG_DIR;
+		restoreProfileState = captureProfileState();
 		configDir = `.omp-restore-profile-test-${process.pid}-${Date.now()}`;
 		process.env.PI_CONFIG_DIR = configDir;
 		process.exitCode = 0;
@@ -35,35 +57,7 @@ describe("--restore of a profile session", () => {
 
 	afterEach(async () => {
 		vi.restoreAllMocks();
-		setProfile(undefined);
-		if (originalConfigDir === undefined) {
-			delete process.env.PI_CONFIG_DIR;
-		} else {
-			process.env.PI_CONFIG_DIR = originalConfigDir;
-		}
-		if (originalProfile) {
-			setProfile(originalProfile);
-		} else if (originalAgentDirEnv !== undefined) {
-			setAgentDir(originalAgentDir);
-		} else {
-			setProfile(undefined);
-		}
-		if (originalOmpProfileEnv === undefined) {
-			delete process.env.OMP_PROFILE;
-		} else {
-			process.env.OMP_PROFILE = originalOmpProfileEnv;
-		}
-		if (originalPiProfileEnv === undefined) {
-			delete process.env.PI_PROFILE;
-		} else {
-			process.env.PI_PROFILE = originalPiProfileEnv;
-		}
-		if (originalAgentDirEnv === undefined) {
-			delete process.env.PI_CODING_AGENT_DIR;
-		} else {
-			process.env.PI_CODING_AGENT_DIR = originalAgentDirEnv;
-		}
-		__resetProfileSnapshotForTests();
+		restoreProfileState();
 		process.exitCode = 0;
 		await removeWithRetries(path.join(os.homedir(), configDir));
 	});
@@ -111,10 +105,10 @@ describe("--restore of a profile session", () => {
 
 describe("--restore=<path> inline spelling", () => {
 	let configDir = "";
-	let originalConfigDir: string | undefined;
+	let restoreProfileState: () => void;
 
 	beforeEach(() => {
-		originalConfigDir = process.env.PI_CONFIG_DIR;
+		restoreProfileState = captureProfileState();
 		configDir = `.omp-restore-inline-test-${process.pid}-${Date.now()}`;
 		process.env.PI_CONFIG_DIR = configDir;
 		process.exitCode = 0;
@@ -122,10 +116,7 @@ describe("--restore=<path> inline spelling", () => {
 
 	afterEach(async () => {
 		vi.restoreAllMocks();
-		setProfile(undefined);
-		if (originalConfigDir === undefined) delete process.env.PI_CONFIG_DIR;
-		else process.env.PI_CONFIG_DIR = originalConfigDir;
-		__resetProfileSnapshotForTests();
+		restoreProfileState();
 		process.exitCode = 0;
 		await removeWithRetries(path.join(os.homedir(), configDir));
 	});
@@ -184,12 +175,10 @@ describe("--restore=<path> inline spelling", () => {
 
 describe("an environment profile against the session's own", () => {
 	let configDir = "";
-	let originalConfigDir: string | undefined;
-	let originalOmpProfileEnv: string | undefined;
+	let restoreProfileState: () => void;
 
 	beforeEach(() => {
-		originalConfigDir = process.env.PI_CONFIG_DIR;
-		originalOmpProfileEnv = process.env.OMP_PROFILE;
+		restoreProfileState = captureProfileState();
 		configDir = `.omp-restore-env-test-${process.pid}-${Date.now()}`;
 		process.env.PI_CONFIG_DIR = configDir;
 		process.exitCode = 0;
@@ -197,13 +186,7 @@ describe("an environment profile against the session's own", () => {
 
 	afterEach(async () => {
 		vi.restoreAllMocks();
-		setProfile(undefined);
-		if (originalConfigDir === undefined) delete process.env.PI_CONFIG_DIR;
-		else process.env.PI_CONFIG_DIR = originalConfigDir;
-		if (originalOmpProfileEnv === undefined) delete process.env.OMP_PROFILE;
-		else process.env.OMP_PROFILE = originalOmpProfileEnv;
-		delete process.env.PI_PROFILE;
-		__resetProfileSnapshotForTests();
+		restoreProfileState();
 		process.exitCode = 0;
 		await removeWithRetries(path.join(os.homedir(), configDir));
 	});
@@ -298,5 +281,30 @@ describe("an environment profile against the session's own", () => {
 		expect(process.exitCode).toBe(0);
 		expect(getActiveProfile()).toBe("work");
 		expect(errSpy.mock.calls.map(call => String(call[0] ?? "")).join("")).not.toContain("Invalid OMP profile");
+	});
+});
+
+describe("captureProfileState", () => {
+	it("puts back the profile variables a test group clears, when the run started with them set", () => {
+		const before = { OMP_PROFILE: process.env.OMP_PROFILE, PI_PROFILE: process.env.PI_PROFILE };
+		try {
+			process.env.OMP_PROFILE = "inherited-omp";
+			process.env.PI_PROFILE = "inherited-pi";
+			const restore = captureProfileState();
+			setProfile(undefined);
+			expect(process.env.OMP_PROFILE).toBeUndefined();
+			expect(process.env.PI_PROFILE).toBeUndefined();
+
+			restore();
+
+			expect(process.env.OMP_PROFILE).toBe("inherited-omp");
+			expect(process.env.PI_PROFILE).toBe("inherited-pi");
+		} finally {
+			setProfile(undefined);
+			for (const [key, value] of Object.entries(before)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
 	});
 });
