@@ -97,9 +97,8 @@ export type PromptCacheTier = "short" | "long";
 
 /**
  * How long after the last real request idle warming keeps refreshing the entry, per retention tier. Continuation
- * estimates become less reliable with age, so the 5m tier keeps its short horizon; the 1h tier's horizon covers a
- * session that sits idle between prompts hours apart, which a 30-minute window never reached (a 1h entry's first
- * refresh is due at 54 minutes).
+ * estimates become less reliable with age, so the horizon is short for 5m entries and long enough for 1h entries
+ * to be refreshed a few times.
  */
 const IDLE_WARMING_WINDOW: Record<PromptCacheTier, { ageMs: number; label: string }> = {
 	short: { ageMs: 30 * 60_000, label: "30-minute" },
@@ -1155,7 +1154,9 @@ export class CacheWarmer {
 	#validateRun(run: ActiveRun): boolean {
 		if (this.#run !== run) return false;
 		const reason =
-			this.#getModeStopReason(run) ?? (run.change() !== undefined ? "conversation context changed" : undefined);
+			this.#getModeStopReason(run) ??
+			(run.change() !== undefined ? "conversation context changed" : undefined) ??
+			(run.phase === "idle" ? this.#idleStopReason(run) : undefined);
 		if (!reason) return true;
 		this.#stop(reason);
 		return false;

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test, vi } from "bun:test";
 import type { AssistantMessage, AssistantMessageEvent, SimpleStreamOptions, Usage } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { Effort } from "@oh-my-pi/pi-catalog/effort";
@@ -330,6 +330,7 @@ describe("cache warmer lifecycle", () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		setSystemTime();
 		vi.restoreAllMocks();
 	});
 
@@ -463,6 +464,17 @@ describe("cache warmer lifecycle", () => {
 		expect(h.warmer.status).toMatchObject({ state: "inactive", reason: "3-hour idle safety limit reached" });
 		await advance(LONG_DELAY_MS);
 		expect(h.replays).toHaveLength(3);
+	});
+
+	test("an idle refresh timer that fires after the window sends nothing", async () => {
+		const h = harness({ decide: () => Promise.resolve("warm") });
+		start(h, { cacheRetention: "long" });
+		h.warmer.onAgentSettled();
+		// The process was suspended past the 3-hour window; the 54-minute timer is still pending.
+		setSystemTime(Date.now() + 4 * 60 * 60_000);
+		await advance(LONG_DELAY_MS);
+		expect(h.replays).toHaveLength(0);
+		expect(h.warmer.status).toMatchObject({ state: "inactive", reason: "3-hour idle safety limit reached" });
 	});
 
 	test("adopts the 1h tier the provider reports writing for a resolver-keyed request", async () => {

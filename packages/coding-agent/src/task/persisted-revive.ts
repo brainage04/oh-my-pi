@@ -413,6 +413,8 @@ export async function revivePersistedSubagent(spec: PersistedReviveSpec, expecte
 			...(persistedModelPattern ? { modelPattern: persistedModelPattern } : {}),
 			modelPatternParentFallback: init.perCallModel ? undefined : init.resolvedModel,
 			settings: subagentSettings,
+			// Same cap as a fresh task: bridge long tool waits, never warm after the subagent settles.
+			cacheWarming: "streaming",
 			sessionManager: reopened,
 			agentId: ref.id,
 			agentDisplayName: ref.displayName,
