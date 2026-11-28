@@ -451,19 +451,18 @@ describe("cache warmer lifecycle", () => {
 		expect(forced.warmer.status).toMatchObject({ state: "inactive", reason: "30-minute idle safety limit reached" });
 	});
 
-	test("warms a 1h entry during an active run but not after it settles", async () => {
-		const running = harness();
-		start(running, { cacheRetention: "long" });
+	test("keeps warming a settled 1h entry until three hours after the last request", async () => {
+		const h = harness();
+		start(h, { cacheRetention: "long" });
+		h.warmer.onAgentSettled();
+		// Refreshes at 54, 108 and 162 minutes; the next (216) falls past the 3-hour window.
+		for (let refresh = 1; refresh <= 3; refresh++) {
+			await advance(LONG_DELAY_MS);
+			expect(h.replays).toHaveLength(refresh);
+		}
+		expect(h.warmer.status).toMatchObject({ state: "inactive", reason: "3-hour idle safety limit reached" });
 		await advance(LONG_DELAY_MS);
-		expect(running.replays).toHaveLength(1);
-
-		const settled = harness({ decide: () => Promise.resolve("warm") });
-		start(settled, { cacheRetention: "long" });
-		settled.warmer.onAgentSettled();
-		expect(settled.warmer.status).toMatchObject({
-			state: "inactive",
-			reason: "cache entry outlives the 30-minute idle window",
-		});
+		expect(h.replays).toHaveLength(3);
 	});
 
 	test("adopts the 1h tier the provider reports writing for a resolver-keyed request", async () => {
@@ -476,9 +475,9 @@ describe("cache warmer lifecycle", () => {
 		expect(h.warmer.status.nextWarmAt).toBe(Date.now() + LONG_DELAY_MS);
 		await advance(SHORT_DELAY_MS);
 		expect(h.replays).toHaveLength(0);
-		// A settled 1h run no longer idle-warms every 4.5 minutes.
+		// A settled 1h run waits for its own 54-minute refresh point, not the 4.5-minute short one.
 		h.warmer.onAgentSettled();
-		expect(h.warmer.status.reason).toBe("cache entry outlives the 30-minute idle window");
+		expect(h.warmer.status.nextWarmAt).toBe(Date.now() + LONG_DELAY_MS - SHORT_DELAY_MS);
 	});
 
 	test("schedules Factory Droid Claude models at the tier their upstream actually writes", () => {

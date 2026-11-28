@@ -19,9 +19,9 @@
  * (ski rental): the extra cost of re-writing the prefix once it expires, or,
  * for prompts past the bridge-compaction threshold, compacting the history
  * before the entry expires and re-writing only the compacted context. The
- * idle phase keeps a fixed continuation probability and a 30-minute window,
- * so an entry whose lifetime outlasts it (Anthropic's 1h tier) is only warmed
- * while a run is active.
+ * idle phase keeps a fixed continuation probability and a per-tier window
+ * after the last real request (30 minutes for 5m entries, 3 hours for 1h
+ * entries), so an entry is refreshed while it is likely to be read again.
  *
  * A model is warmed only when its catalog entry (or a models.yml `promptCache`
  * override) declares a lifetime for the retention tier the request used, so
@@ -95,8 +95,16 @@ export interface CacheWarmingRefreshEnd extends CacheWarmingRefreshStart {
 /** Prompt-cache retention tier a request wrote its entry under. */
 export type PromptCacheTier = "short" | "long";
 
-/** Idle warming uses a shorter horizon because continuation estimates become less reliable with age. */
-const MAX_IDLE_WARMING_AGE_MS = 30 * 60_000;
+/**
+ * How long after the last real request idle warming keeps refreshing the entry, per retention tier. Continuation
+ * estimates become less reliable with age, so the 5m tier keeps its short horizon; the 1h tier's horizon covers a
+ * session that sits idle between prompts hours apart, which a 30-minute window never reached (a 1h entry's first
+ * refresh is due at 54 minutes).
+ */
+const IDLE_WARMING_WINDOW: Record<PromptCacheTier, { ageMs: number; label: string }> = {
+	short: { ageMs: 30 * 60_000, label: "30-minute" },
+	long: { ageMs: 3 * 60 * 60_000, label: "3-hour" },
+};
 /** A refresh or bridge compaction is sent only when it is expected to save at least this many dollars. */
 const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
 /**
@@ -594,7 +602,7 @@ export class CacheWarmer {
 	 * stops paying if prices hold. Undefined while streaming refreshes are free.
 	 */
 	#stopsAt(run: ActiveRun, decision: CacheWarmingDecision): number | undefined {
-		if (run.phase === "idle") return run.startedAt + MAX_IDLE_WARMING_AGE_MS;
+		if (run.phase === "idle") return run.startedAt + IDLE_WARMING_WINDOW[run.tier].ageMs;
 		if (decision.action !== "warm") return run.nextWarmAt;
 		if (decision.warmCost <= 0) return undefined;
 		const buy =
@@ -773,12 +781,13 @@ export class CacheWarmer {
 	}
 
 	#idleStopReason(run: ActiveRun): string | undefined {
-		const deadline = run.startedAt + MAX_IDLE_WARMING_AGE_MS;
-		if (Date.now() >= deadline) return "30-minute idle safety limit reached";
+		const { ageMs, label } = IDLE_WARMING_WINDOW[run.tier];
+		const deadline = run.startedAt + ageMs;
+		if (Date.now() >= deadline) return `${label} idle safety limit reached`;
 		if (run.nextWarmAt <= deadline) return undefined;
-		return run.delayMs >= MAX_IDLE_WARMING_AGE_MS
-			? "cache entry outlives the 30-minute idle window"
-			: "30-minute idle safety limit reached";
+		return run.delayMs >= ageMs
+			? `cache entry outlives the ${label} idle window`
+			: `${label} idle safety limit reached`;
 	}
 
 	/** A refresh sent at `sentAt` left the run's entry in the cache: its lifetime restarts then, at the replay's size. */
