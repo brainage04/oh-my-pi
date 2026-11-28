@@ -28,6 +28,10 @@ class CountingStorage extends FileSessionStorage {
 	appendBytes = 0;
 	/** Whole-file publishes started, sync and async. */
 	publishes = 0;
+	/** When set, every writer flush waits for it, as a backend that confirms a publish later does. */
+	flushGate: Promise<void> | undefined;
+	/** Called when a writer flush starts, before it waits for {@link flushGate}. */
+	onFlush: (() => void) | undefined;
 
 	#countLines(lines: readonly string[]): number {
 		let bytes = 0;
@@ -74,7 +78,11 @@ class CountingStorage extends FileSessionStorage {
 						appendSync(line);
 					}
 				: undefined,
-			flush: () => writer.flush(),
+			flush: async () => {
+				this.onFlush?.();
+				await this.flushGate;
+				await writer.flush();
+			},
 			flushSync: writer.flushSync?.bind(writer),
 			isOpen: () => writer.isOpen(),
 			close: () => writer.close(),
@@ -227,6 +235,28 @@ describe("discarding a failed turn on a long session", () => {
 		} finally {
 			await reloaded.close();
 		}
+	});
+
+	it("does not resolve before the writer confirms the marker", async () => {
+		const failedId = appendFailedTurn();
+		await manager.flush();
+		branchToParentOf(failedId);
+		const gate = Promise.withResolvers<void>();
+		const flushStarted = Promise.withResolvers<void>();
+		storage.flushGate = gate.promise;
+		storage.onFlush = flushStarted.resolve;
+
+		let settled = false;
+		const discard = manager.discardEntryDurably(failedId).then(() => {
+			settled = true;
+		});
+		// Resolves when the writer's flush starts; a discard that returns without flushing wins the race.
+		await Promise.race([flushStarted.promise, discard]);
+		expect(settled).toBe(false);
+
+		gate.resolve();
+		await discard;
+		expect(settled).toBe(true);
 	});
 
 	it("is a no-op when the entry already has a discard marker", async () => {

@@ -4244,6 +4244,9 @@ export class SessionManager {
 			kind: DISCARDED_ENTRY_BRANCH_MARKER,
 			discardedEntryId: entryId,
 		});
+		// turn-recovery relies on this await: the marker must be confirmed before the
+		// caller treats the turn as gone, or a kill mid-retry resurfaces it.
+		await this.flush();
 	}
 
 	/** Like branch(), but also records a branch_summary of the abandoned path. */
