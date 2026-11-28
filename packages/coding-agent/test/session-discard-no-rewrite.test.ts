@@ -254,9 +254,21 @@ describe("discarding a failed turn on a long session", () => {
 		await Promise.race([flushStarted.promise, discard]);
 		expect(settled).toBe(false);
 
+		// A second discard of the same entry finds the marker in memory and must still wait.
+		let secondSettled = false;
+		const second = manager.discardEntryDurably(failedId).then(() => {
+			secondSettled = true;
+		});
+		// One macrotask: enough for a second discard that returns early to have settled.
+		const turn = Promise.withResolvers<void>();
+		setImmediate(turn.resolve);
+		await turn.promise;
+		expect(secondSettled).toBe(false);
+
 		gate.resolve();
-		await discard;
+		await Promise.all([discard, second]);
 		expect(settled).toBe(true);
+		expect(secondSettled).toBe(true);
 	});
 
 	it("is a no-op when the entry already has a discard marker", async () => {

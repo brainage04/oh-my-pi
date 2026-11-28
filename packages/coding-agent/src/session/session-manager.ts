@@ -4230,7 +4230,12 @@ export class SessionManager {
 		// branch says nothing about whether it was already discarded. The marker is
 		// the durable evidence: with one present, a second call would branch back
 		// past it and drop the turns after it.
-		if (this.#entries.some(candidate => isDiscardMarkerFor(candidate, entryId))) return;
+		if (this.#entries.some(candidate => isDiscardMarkerFor(candidate, entryId))) {
+			// The marker is in memory from the moment it is appended, so a second call must
+			// wait for the first one's persistence, and see its failure, rather than return early.
+			await this.flush();
+			return;
+		}
 		const children = this.#index.childrenOf(entryId);
 		const canReparentChildren = children.every(child => child.type === "service_tier_change");
 		let leafId = entry.parentId;
