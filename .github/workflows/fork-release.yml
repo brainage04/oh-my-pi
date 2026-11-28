@@ -10,18 +10,19 @@ name: Fork release
 # because the fork exists to carry a handful of TypeScript patches for Thomas's
 # hosts, and every one of them is platform-independent.
 #
-# Tag format: `v<upstream version>-bp.<n>`, e.g. `v19.1.1-bp.1`.
+# Tag format: `v<upstream version>+bp.<n>` (semver build metadata, so the release
+# compares equal to upstream's version), e.g. `v19.2.1+bp.1`.
 
 on:
   workflow_dispatch:
      inputs:
         tag:
-           description: "Tag to build and release, e.g. v19.1.1-bp.1. If it does not exist yet, it is created at the commit this run builds."
+           description: "Tag to build and release, e.g. v19.2.1+bp.1. If it does not exist yet, it is created at the commit this run builds."
            required: true
            type: string
   push:
      tags:
-        - "v*-bp.*"
+        - 'v*\+bp.*'
 
 permissions:
   contents: read
@@ -60,8 +61,8 @@ jobs:
              else
                tag="${GITHUB_REF_NAME}"
              fi
-             if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-bp\.([0-9]+)$ ]]; then
-               echo "::error::tag '$tag' is not v<version>-bp.<n>"
+             if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\+bp\.([0-9]+)$ ]]; then
+               echo "::error::tag '$tag' is not v<version>+bp.<n>"
                exit 1
              fi
              version="${BASH_REMATCH[1]}"
