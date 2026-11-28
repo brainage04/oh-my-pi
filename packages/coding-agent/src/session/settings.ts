@@ -1364,7 +1364,7 @@ export const cfgProvidersCacheWarming = register({
 				value: "idle",
 				label: "Idle",
 				description:
-					"Also refresh 5-minute entries between runs while the expected savings stay above the cost floor",
+					"Also refresh entries between runs (5-minute entries for 30 minutes, 1-hour entries for 3 hours) while the expected savings stay above the cost floor",
 			},
 		],
 	},
